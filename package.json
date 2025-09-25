@@ -1,0 +1,36 @@
+{
+	"name": "akshara-server",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"db:generate": "drizzle-kit generate",
+		"db:push": "drizzle-kit push",
+		"db:pull": "drizzle-kit pull",
+		"db:studio": "drizzle-kit studio",
+		"db:migrate": "drizzle-kit migrate"
+	},
+	"dependencies": {
+		"@trpc/server": "^11.5.1",
+		"@types/morgan": "^1.9.10",
+		"@types/node": "^24.3.1",
+		"bcryptjs": "^2.4.3",
+		"dotenv": "^17.2.2",
+		"drizzle-orm": "^0.44.5",
+		"jsonwebtoken": "^9.0.2",
+		"morgan": "^1.10.1",
+		"pg": "^8.16.3",
+		"zod": "^4.1.9"
+	},
+	"devDependencies": {
+		"@types/bcryptjs": "^2.4.6",
+		"@types/jsonwebtoken": "^9.0.10",
+		"@types/pg": "^8.15.5",
+		"drizzle-kit": "^0.31.4",
+		"tsx": "^4.20.5",
+		"typescript": "~5.8.3"
+	}
+}
