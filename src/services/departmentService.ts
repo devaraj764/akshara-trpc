@@ -56,7 +56,7 @@ export class DepartmentService {
           staffCount: sql<number>`(
             SELECT COUNT(*) FROM ${staff} 
             WHERE ${staff.departmentId} = ${departments.id} 
-            AND ${staff.isDeleted} = false
+            AND ${staff.isActive} = true
           )`.as('staffCount')
         } : {})
       })
@@ -135,6 +135,10 @@ export class DepartmentService {
         
         const newDepartment = await tx.insert(departments).values(insertData).returning();
 
+        if (!newDepartment || !newDepartment[0]) {
+          throw new Error('Failed to create department');
+        }
+
         // If it's a private department for an organization, automatically add to enabled list
         if (data.isPrivate && data.organizationId) {
           // Get current enabled departments
@@ -143,7 +147,7 @@ export class DepartmentService {
             .where(eq(organizations.id, data.organizationId))
             .limit(1);
 
-          if (orgResult.length > 0) {
+          if (orgResult && orgResult[0]) {
             const currentEnabled = orgResult[0].enabledDepartments || [];
             const newEnabled = [...currentEnabled, newDepartment[0].id];
             
@@ -290,7 +294,7 @@ export class DepartmentService {
       // Check if department has staff members
       const staffCount = await db.select({ count: sql<number>`COUNT(*)` })
         .from(staff)
-        .where(and(eq(staff.departmentId, id), eq(staff.isDeleted, false)));
+        .where(and(eq(staff.departmentId, id), eq(staff.isActive, true)));
 
       if (staffCount[0]?.count && staffCount[0].count > 0) {
         return {
@@ -378,7 +382,7 @@ export class DepartmentService {
         .where(eq(organizations.id, organizationId))
         .limit(1);
 
-      if (orgResult.length === 0) {
+      if (!orgResult || !orgResult[0]) {
         return {
           success: false,
           error: 'Organization not found'
@@ -490,6 +494,167 @@ export class DepartmentService {
       return {
         success: false,
         error: error.message || 'Failed to fetch private departments'
+      };
+    }
+  }
+
+  // Check removal info - determines if department should be deleted or just removed from enabled list
+  static async checkRemoval(departmentId: number, organizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      // Get department details
+      const departmentResult = await db.select({
+        id: departments.id,
+        name: departments.name,
+        isPrivate: departments.isPrivate,
+        organizationId: departments.organizationId,
+      })
+      .from(departments)
+      .where(and(eq(departments.id, departmentId), eq(departments.isDeleted, false)))
+      .limit(1);
+
+      if (departmentResult.length === 0) {
+        return {
+          success: false,
+          error: 'Department not found'
+        };
+      }
+
+      const department = departmentResult[0];
+
+      // Check if department has active staff
+      const staffCount = await db.select({ count: sql<number>`COUNT(*)` })
+        .from(staff)
+        .where(and(eq(staff.departmentId, departmentId), eq(staff.isActive, true)));
+
+      const hasStaff = staffCount[0]?.count > 0;
+
+      // Determine removal type
+      let removalType: 'remove' | 'delete';
+      let canRemove = true;
+      let reason = '';
+
+      if (department.isPrivate && department.organizationId === organizationId) {
+        // Private department owned by user's organization - delete entirely
+        removalType = 'delete';
+        if (hasStaff) {
+          canRemove = false;
+          reason = `Cannot delete department as it has ${staffCount[0]?.count} active staff members`;
+        }
+      } else {
+        // Global department - just remove from enabled list
+        removalType = 'remove';
+        // Can always remove from enabled list
+      }
+
+      return {
+        success: true,
+        data: {
+          departmentId,
+          departmentName: department.name,
+          removalType,
+          canRemove,
+          reason,
+          hasStaff,
+          staffCount: staffCount[0]?.count || 0,
+          isPrivate: department.isPrivate,
+          ownedByOrganization: department.organizationId === organizationId
+        }
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to check removal info'
+      };
+    }
+  }
+
+  // Remove or delete department based on ownership and usage
+  static async removeOrDelete(departmentId: number, organizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      // First check removal info
+      const checkResult = await this.checkRemoval(departmentId, organizationId);
+      
+      if (!checkResult.success) {
+        return checkResult;
+      }
+
+      const { removalType, canRemove, reason } = checkResult.data;
+
+      if (!canRemove) {
+        return {
+          success: false,
+          error: reason
+        };
+      }
+
+      if (removalType === 'delete') {
+        // Delete the private department entirely
+        const result = await db.update(departments)
+          .set({ 
+            isDeleted: true,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(and(eq(departments.id, departmentId), eq(departments.isDeleted, false)))
+          .returning();
+
+        if (result.length === 0) {
+          return {
+            success: false,
+            error: 'Department not found'
+          };
+        }
+
+        return {
+          success: true,
+          data: {
+            action: 'deleted',
+            department: result[0]
+          }
+        };
+      } else {
+        // Remove from organization's enabled departments list
+        if (!organizationId) {
+          return {
+            success: false,
+            error: 'Organization ID is required'
+          };
+        }
+
+        const result = await db.transaction(async (tx) => {
+          // Get current enabled departments
+          const orgResult = await tx.select({ enabledDepartments: organizations.enabledDepartments })
+            .from(organizations)
+            .where(eq(organizations.id, organizationId))
+            .limit(1);
+
+          if (!orgResult || !orgResult[0]) {
+            throw new Error('Organization not found');
+          }
+
+          const currentEnabled = orgResult[0].enabledDepartments || [];
+          const newEnabled = currentEnabled.filter(id => id !== departmentId);
+          
+          // Update organization's enabled departments
+          await tx.update(organizations)
+            .set({ enabledDepartments: newEnabled })
+            .where(eq(organizations.id, organizationId));
+
+          return { departmentId, organizationId };
+        });
+
+        return {
+          success: true,
+          data: {
+            action: 'removed',
+            departmentId: result.departmentId,
+            organizationId: result.organizationId
+          }
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to remove or delete department'
       };
     }
   }

@@ -85,8 +85,8 @@ export const subjectRouter = router({
       return result.data;
     }),
 
-  // Create subject - branch admins can create in their organization, admins can create anywhere
-  create: branchAdminProcedure
+  // Create subject - Only admins can create subjects
+  create: adminProcedure
     .input(createSubjectSchema)
     .mutation(async ({ input, ctx }) => {
       // For branch admins, ensure they create in their own organization
@@ -111,8 +111,8 @@ export const subjectRouter = router({
       return result.data;
     }),
 
-  // Update subject
-  update: branchAdminProcedure
+  // Update subject - Only admins can update subjects
+  update: adminProcedure
     .input(updateSubjectSchema)
     .mutation(async ({ input, ctx }) => {
       const result = await SubjectService.update(
@@ -132,8 +132,8 @@ export const subjectRouter = router({
       return result.data;
     }),
 
-  // Delete subject (soft delete)
-  delete: branchAdminProcedure
+  // Delete subject (soft delete) - Only admins can delete subjects
+  delete: adminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
@@ -154,8 +154,8 @@ export const subjectRouter = router({
       return result.data;
     }),
 
-  // Restore subject
-  restore: branchAdminProcedure
+  // Restore subject - Only admins can restore subjects
+  restore: adminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
@@ -250,12 +250,68 @@ export const subjectRouter = router({
       
       return result.data;
     }),
+
+  // Check removal info - determines if subject should be deleted or just removed from enabled list
+  checkRemoval: adminProcedure
+    .input(z.object({
+      subjectId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await SubjectService.checkRemoval(input.subjectId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to check removal info'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to check removal info'
+        });
+      }
+    }),
+
+  // Remove or delete subject based on ownership and usage
+  removeOrDelete: adminProcedure
+    .input(z.object({
+      subjectId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await SubjectService.removeOrDelete(input.subjectId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to remove or delete subject'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to remove or delete subject'
+        });
+      }
+    }),
 });
 
 // Teacher assignment router - For managing teacher-subject relationships
 export const subjectTeacherRouter = router({
-  // Assign teacher to subject
-  assignTeacher: branchAdminProcedure
+  // Assign teacher to subject - Only admins can assign teachers
+  assignTeacher: adminProcedure
     .input(assignTeacherSchema)
     .mutation(async ({ input }) => {
       const result = await SubjectService.assignTeacher(input.subjectId, input.teacherId, input.sectionId);
@@ -270,8 +326,8 @@ export const subjectTeacherRouter = router({
       return result.data;
     }),
 
-  // Unassign teacher from subject
-  unassignTeacher: branchAdminProcedure
+  // Unassign teacher from subject - Only admins can unassign teachers
+  unassignTeacher: adminProcedure
     .input(assignTeacherSchema)
     .mutation(async ({ input }) => {
       const result = await SubjectService.unassignTeacher(input.subjectId, input.teacherId);
@@ -335,8 +391,8 @@ export const subjectAssignmentRouter = router({
       return result.data;
     }),
 
-  // Create assignment
-  create: branchAdminProcedure
+  // Create assignment - Only admins can create assignments
+  create: adminProcedure
     .input(createAssignmentSchema)
     .mutation(async ({ input, ctx }) => {
       const result = await SubjectService.createAssignment(input);
@@ -351,8 +407,8 @@ export const subjectAssignmentRouter = router({
       return result.data;
     }),
 
-  // Delete assignment
-  delete: branchAdminProcedure
+  // Delete assignment - Only admins can delete assignments
+  delete: adminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))

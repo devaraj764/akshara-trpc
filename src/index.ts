@@ -3,6 +3,7 @@ import { createContext, router } from './trpc.js';
 import { authRouter } from './routes/auth.js';
 import { userRouter } from './routes/user.js';
 import { studentRouter } from './routes/student.js';
+import { enrollmentRouter } from './routes/enrollment.js';
 import { teacherRouter } from './routes/teacher.js';
 import { classRouter, sectionRouter } from './routes/class.js';
 import { subjectsRouter } from './routes/subject.js';
@@ -19,6 +20,7 @@ import { noticeBoardRouter } from './routes/noticeBoard.js';
 // Removed deprecated feeStructure routes
 import { feeTypesRouter } from './routes/feeTypes.js';
 import { feeItemsRouter } from './routes/feeItems.js';
+import { parentRouter } from './routes/parent.js';
 import * as dotenv from 'dotenv';
 import morgan from 'morgan';
 
@@ -58,6 +60,7 @@ const appRouter = router({
   auth: authRouter,
   user: userRouter,
   student: studentRouter,
+  enrollment: enrollmentRouter,
   teacher: teacherRouter,
   classes: classRouter,
   sections: sectionRouter,
@@ -77,6 +80,7 @@ const appRouter = router({
   // Removed deprecated feeStructure router
   feeTypes: feeTypesRouter,
   feeItems: feeItemsRouter,
+  parents: parentRouter,
 });
 
 // Export type definition of API
@@ -130,6 +134,17 @@ const server = createHTTPServer({
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+    
+    // Health check endpoint
+    if (req.url === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        version: process.env.npm_package_version || '1.0.0'
+      }));
       return;
     }
     

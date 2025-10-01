@@ -59,6 +59,11 @@ const JWT_ACCESS_SECRET: string = process.env.JWT_ACCESS_SECRET || 'your-access-
 const JWT_REFRESH_SECRET: string = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key';
 const ACCESS_TOKEN_EXPIRY: string = process.env.ACCESS_TOKEN_EXPIRY || '15m';
 const REFRESH_TOKEN_EXPIRY: string = process.env.REFRESH_TOKEN_EXPIRY || '7d';
+
+// Log warning if using default secrets
+if (JWT_ACCESS_SECRET === 'your-access-secret-key' || JWT_REFRESH_SECRET === 'your-refresh-secret-key') {
+  console.warn('⚠️  WARNING: Using default JWT secrets. Please set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET environment variables in production!');
+}
 const BCRYPT_ROUNDS = 12;
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_TIME = 30 * 60 * 1000; // 30 minutes
@@ -447,7 +452,15 @@ class AuthService {
       }
 
       // Verify refresh token
-      const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as any;
+      let decoded: any;
+      try {
+        decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as any;
+      } catch (err: any) {
+        if (err.name === 'TokenExpiredError') {
+          return { success: false, error: 'Refresh token has expired' };
+        }
+        return { success: false, error: 'Invalid refresh token format' };
+      }
       
       if (decoded.type !== 'refresh') {
         return { success: false, error: 'Invalid token type' };
@@ -455,7 +468,14 @@ class AuthService {
 
       // Check if token exists in store
       const tokenData = refreshTokenStore.get(decoded.tokenId);
-      if (!tokenData || tokenData.userId !== decoded.userId) {
+      if (!tokenData) {
+        console.log('Token not found in store:', decoded.tokenId);
+        console.log('Available tokens:', Array.from(refreshTokenStore.keys()));
+        return { success: false, error: 'Invalid refresh token' };
+      }
+      
+      if (tokenData.userId !== decoded.userId) {
+        console.log('User ID mismatch:', { tokenUserId: tokenData.userId, decodedUserId: decoded.userId });
         return { success: false, error: 'Invalid refresh token' };
       }
 
@@ -475,12 +495,21 @@ class AuthService {
         return { success: false, error: 'Account is deactivated' };
       }
 
-      // Fetch user roles from userRoles table
-      const userRoleResult = await db.select().from(userRoles).where(eq(userRoles.userId, user.id)).limit(1);
-      let userRole = 'STUDENT'; // Default role - use valid enum value
-      if (userRoleResult.length > 0 && userRoleResult[0]) {
-        // Use database role enum as-is since tRPC procedures expect uppercase roles
-        userRole = userRoleResult[0].role;
+      // Fetch user roles from userRoles table - use same logic as sign-in
+      const userRoleResult = await db.select().from(userRoles).where(eq(userRoles.userId, user.id));
+      let userRole: any = 'STUDENT'; // Default role - use valid enum value
+      
+      if (userRoleResult.length > 0) {
+        // If user has multiple roles, prioritize in this order: SUPER_ADMIN, ADMIN, BRANCH_ADMIN, ACCOUNTANT, TEACHER, PARENT, STAFF, STUDENT
+        const rolePriority = ['SUPER_ADMIN', 'ADMIN', 'BRANCH_ADMIN', 'ACCOUNTANT', 'TEACHER', 'PARENT', 'STAFF', 'STUDENT'];
+        const userRoles = userRoleResult.map(r => r.role);
+        
+        for (const priority of rolePriority) {
+          if (userRoles.includes(priority as any)) {
+            userRole = priority;
+            break;
+          }
+        }
       }
 
       // Create user object
@@ -495,18 +524,19 @@ class AuthService {
         role: userRole
       };
 
-      // Invalidate old refresh token (token rotation)
+      // Generate new token pair BEFORE invalidating old one (prevents race conditions)
+      const newTokens = this.generateTokenPair(userObj, deviceInfo);
+
+      // Only invalidate old refresh token after successful generation of new tokens
       refreshTokenStore.delete(decoded.tokenId);
       blacklistedTokens.add(refreshToken);
-
-      // Generate new token pair
-      const newTokens = this.generateTokenPair(userObj, deviceInfo);
 
       return {
         success: true,
         data: newTokens
       };
     } catch (err: any) {
+      console.error('Refresh token error:', err);
       return { success: false, error: 'Invalid refresh token' };
     }
   }

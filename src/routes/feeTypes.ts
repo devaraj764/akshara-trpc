@@ -28,7 +28,7 @@ export const feeTypesRouter = router({
   // Admin procedures - can manage all fee types
   create: adminProcedure
     .input(createFeeTypeSchema)
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       try {
         const result = await FeeTypesService.create(input);
 
@@ -96,9 +96,9 @@ export const feeTypesRouter = router({
       }
     }),
 
-  getAll: adminProcedure
+  getAll: branchAdminProcedure
     .input(getFeeTypesSchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       try {
         const result = await FeeTypesService.getAll(input);
 
@@ -119,9 +119,9 @@ export const feeTypesRouter = router({
       }
     }),
 
-  getById: adminProcedure
+  getById: branchAdminProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       try {
         const result = await FeeTypesService.getById(input.id);
 
@@ -142,7 +142,7 @@ export const feeTypesRouter = router({
       }
     }),
 
-  getOrganizationFeeTypes: adminProcedure
+  getOrganizationFeeTypes: branchAdminProcedure
     .input(z.object({ organizationId: z.number().int().positive().optional() }))
     .query(async ({ input, ctx }) => {
       try {
@@ -183,6 +183,57 @@ export const feeTypesRouter = router({
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: error.message || 'Failed to fetch global fee types'
+        });
+      }
+    }),
+
+  getEnabledFeeTypes: adminProcedure
+    .input(z.object({ organizationId: z.number().int().positive().optional() }))
+    .query(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await FeeTypesService.getEnabledFeeTypes(organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to fetch enabled fee types'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to fetch enabled fee types'
+        });
+      }
+    }),
+
+  addToEnabledFeeTypes: adminProcedure
+    .input(z.object({
+      organizationId: z.number().int().positive().optional(),
+      feeTypeIds: z.array(z.number().int().positive()).min(1, 'At least one fee type ID is required')
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await FeeTypesService.addToEnabledFeeTypes(organizationId, input.feeTypeIds);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to add fee types to enabled list'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to add fee types to enabled list'
         });
       }
     }),
@@ -249,6 +300,62 @@ export const feeTypesRouter = router({
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: error.message || 'Failed to fetch fee type stats'
+        });
+      }
+    }),
+
+  // Check removal info - determines if fee type should be deleted or just removed from enabled list
+  checkRemoval: adminProcedure
+    .input(z.object({
+      feeTypeId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await FeeTypesService.checkRemoval(input.feeTypeId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to check removal info'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to check removal info'
+        });
+      }
+    }),
+
+  // Remove or delete fee type based on ownership and usage
+  removeOrDelete: adminProcedure
+    .input(z.object({
+      feeTypeId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await FeeTypesService.removeOrDelete(input.feeTypeId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to remove or delete fee type'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to remove or delete fee type'
         });
       }
     }),

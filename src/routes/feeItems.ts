@@ -105,7 +105,7 @@ export const feeItemsRouter = router({
       }
     }),
 
-  getAll: adminProcedure
+  getAll: branchAdminProcedure
     .input(getFeeItemsSchema)
     .query(async ({ input, ctx }) => {
       try {
@@ -131,9 +131,9 @@ export const feeItemsRouter = router({
       }
     }),
 
-  getById: adminProcedure
+  getById: branchAdminProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       try {
         const result = await FeeItemsService.getById(input.id);
 
@@ -207,112 +207,7 @@ export const feeItemsRouter = router({
       }
     }),
 
-  // Branch Admin procedures - can manage branch-level fee items
-  branchCreate: branchAdminProcedure
-    .input(createFeeItemSchema.omit({ branchId: true, organizationId: true }))
-    .mutation(async ({ input, ctx }) => {
-      try {
-        const result = await FeeItemsService.create({
-          ...input,
-          branchId: ctx.user.branchId!,
-          organizationId: ctx.user.organizationId
-        });
 
-        if (!result.success) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: result.error || 'Failed to create fee item'
-          });
-        }
-
-        return result.data;
-      } catch (error: any) {
-        if (error instanceof TRPCError) throw error;
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error.message || 'Failed to create fee item'
-        });
-      }
-    }),
-
-  branchUpdate: branchAdminProcedure
-    .input(updateFeeItemSchema)
-    .mutation(async ({ input, ctx }) => {
-      try {
-        // Verify the fee item belongs to this branch
-        const feeItem = await FeeItemsService.getById(input.id);
-        if (!feeItem.success) {
-          throw new TRPCError({
-            code: 'NOT_FOUND',
-            message: 'Fee item not found'
-          });
-        }
-
-        if (feeItem.data.branchId !== ctx.user.branchId) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Not authorized to update this fee item'
-          });
-        }
-
-        const { id, ...updateData } = input;
-        const result = await FeeItemsService.update(id, updateData);
-
-        if (!result.success) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: result.error || 'Failed to update fee item'
-          });
-        }
-
-        return result.data;
-      } catch (error: any) {
-        if (error instanceof TRPCError) throw error;
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error.message || 'Failed to update fee item'
-        });
-      }
-    }),
-
-  branchDelete: branchAdminProcedure
-    .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ input, ctx }) => {
-      try {
-        // Verify the fee item belongs to this branch
-        const feeItem = await FeeItemsService.getById(input.id);
-        if (!feeItem.success) {
-          throw new TRPCError({
-            code: 'NOT_FOUND',
-            message: 'Fee item not found'
-          });
-        }
-
-        if (feeItem.data.branchId !== ctx.user.branchId) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Not authorized to delete this fee item'
-          });
-        }
-
-        const result = await FeeItemsService.delete(input.id);
-
-        if (!result.success) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: result.error || 'Failed to delete fee item'
-          });
-        }
-
-        return result.data;
-      } catch (error: any) {
-        if (error instanceof TRPCError) throw error;
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error.message || 'Failed to delete fee item'
-        });
-      }
-    }),
 
   getBranchFeeItems: branchAdminProcedure
     .input(z.object({ 

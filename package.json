@@ -11,7 +11,10 @@
 		"db:push": "drizzle-kit push",
 		"db:pull": "drizzle-kit pull",
 		"db:studio": "drizzle-kit studio",
-		"db:migrate": "drizzle-kit migrate"
+		"db:migrate": "drizzle-kit migrate",
+		"deploy": "npm run build && npm run start",
+		"docker:build": "docker build -t akshara-server .",
+		"docker:run": "docker run -p 3001:3001 --env-file .env.production akshara-server"
 	},
 	"dependencies": {
 		"@trpc/server": "^11.5.1",

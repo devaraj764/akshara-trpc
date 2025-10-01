@@ -65,9 +65,15 @@ export const createContext = async (opts: CreateContextOptions) => {
         console.log(`🔐 AUTH SUCCESS: ${timestamp} - User: ${newUser.id} (${newUser.email}) - Role: ${newUser.role}`);
       }
     } catch (error: any) {
-      const errorMsg = error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError || error instanceof jwt.NotBeforeError
-        ? `Invalid token: ${error.message}`
-        : error.message;
+      let errorMsg = error.message;
+      if (error instanceof jwt.TokenExpiredError) {
+        errorMsg = 'Token expired - please refresh your session';
+      } else if (error instanceof jwt.JsonWebTokenError) {
+        errorMsg = `Invalid token: ${error.message}`;
+      } else if (error instanceof jwt.NotBeforeError) {
+        errorMsg = `Token not active: ${error.message}`;
+      }
+      
       const clientIP = (req as any).socket?.remoteAddress || (req as any).connection?.remoteAddress || 'unknown';
       console.log(`🔐 AUTH FAILED: ${timestamp} - ${errorMsg} - IP: ${clientIP}`);
       // Token is invalid, but we'll let individual procedures decide if auth is required
@@ -128,7 +134,9 @@ const isAuthenticated = t.middleware(({ ctx, next }) => {
   if (ctx.user.type !== 'access') {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
-      message: 'Invalid token type. Access token required.',
+      message: ctx.user.type === 'refresh' 
+        ? 'Refresh token provided instead of access token. Please use access token for API calls.' 
+        : 'Invalid token type. Access token required.',
     });
   }
   

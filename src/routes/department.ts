@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, adminProcedure, protectedProcedure } from '../trpc.js';
+import { router, adminProcedure, branchAdminProcedure, protectedProcedure } from '../trpc.js';
 import { TRPCError } from '@trpc/server';
 import { DepartmentService } from '../services/departmentService.js';
 
@@ -27,8 +27,8 @@ const bulkCreateDepartmentSchema = z.object({
 
 // Departments router - Only admins can manage departments
 export const departmentRouter = router({
-  // Get all departments
-  getAll: adminProcedure
+  // Get all departments - accessible by both admin and branch admin
+  getAll: branchAdminProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),
@@ -36,11 +36,14 @@ export const departmentRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       // For non-super admins, restrict to their organization
+      // For branch admins, also restrict to their branch if specified
       const organizationId = ctx.user.role === 'SUPER_ADMIN' ? input.organizationId : ctx.user.organizationId;
+      const branchId = ctx.user.role === 'ADMIN' ? input.branchId : (input.branchId || ctx.user.branchId);
       
       const result = await DepartmentService.getAll({
         ...input,
-        organizationId: organizationId || undefined
+        organizationId: organizationId || undefined,
+        branchId: branchId || undefined
       });
       
       if (!result.success) {
@@ -53,8 +56,8 @@ export const departmentRouter = router({
       return result.data;
     }),
 
-  // Get department by ID
-  getById: adminProcedure
+  // Get department by ID - accessible by both admin and branch admin
+  getById: branchAdminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
@@ -70,6 +73,14 @@ export const departmentRouter = router({
 
       // For non-super admins, ensure they can only access departments from their organization
       if (ctx.user.role !== 'SUPER_ADMIN' && result.data.organizationId !== ctx.user.organizationId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Access denied to this department',
+        });
+      }
+
+      // For branch admins, ensure they can only access departments from their branch
+      if (ctx.user.role === 'BRANCH_ADMIN' && result.data.branchId !== ctx.user.branchId) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Access denied to this department',
@@ -194,13 +205,22 @@ export const departmentRouter = router({
       return result.data;
     }),
 
-  // Get departments by branch
-  getByBranch: adminProcedure
+  // Get departments by branch - accessible by branch admins
+  getByBranch: branchAdminProcedure
     .input(z.object({
-      branchId: z.number().positive(),
+      branchId: z.number().positive().optional(),
     }))
     .query(async ({ input, ctx }) => {
-      const result = await DepartmentService.getByBranch(input.branchId);
+      // For branch admins, restrict to their branch only
+      const branchId = ctx.user.role === 'ADMIN' ? input.branchId : ctx.user.branchId;
+      
+      if (!branchId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Branch ID is required',
+        });
+      }
+      const result = await DepartmentService.getByBranch(branchId);
       
       if (!result.success) {
         throw new TRPCError({
@@ -286,8 +306,8 @@ export const departmentRouter = router({
       return result.data;
     }),
 
-  // Get enabled departments for organization
-  getEnabledForOrganization: protectedProcedure
+  // Get enabled departments for organization - accessible by branch admins
+  getEnabledForOrganization: branchAdminProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
     }).optional())
@@ -345,5 +365,61 @@ export const departmentRouter = router({
       }
       
       return result.data;
+    }),
+
+  // Check removal info - determines if department should be deleted or just removed from enabled list
+  checkRemoval: adminProcedure
+    .input(z.object({
+      departmentId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await DepartmentService.checkRemoval(input.departmentId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to check removal info'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to check removal info'
+        });
+      }
+    }),
+
+  // Remove or delete department based on ownership and usage
+  removeOrDelete: adminProcedure
+    .input(z.object({
+      departmentId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await DepartmentService.removeOrDelete(input.departmentId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to remove or delete department'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to remove or delete department'
+        });
+      }
     }),
 });

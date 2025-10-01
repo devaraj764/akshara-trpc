@@ -7,29 +7,301 @@ import {
   studentMedicalRecords,
   studentBehavioralRecords,
   studentDocuments,
-  studentExtracurricularActivities
+  studentExtracurricularActivities,
+  enrollments,
+  grades,
+  sections,
+  academicYears
 } from '../db/schema.js';
-import { ServiceResponse } from '../types.db.js';
+import type { ServiceResponse } from '../types.db.js';
+
+interface CreateStudentData {
+  organizationId: number;
+  branchId: number;
+  firstName: string;
+  lastName?: string;
+  admissionNumber?: string;
+  dob?: string;
+  gender?: string;
+  bloodGroup?: string;
+  address?: string;
+  phone?: string;
+  emergencyContact?: {
+    name: string;
+    phone: string;
+    relationship: string;
+    address?: string;
+  };
+  photoUrl?: string;
+  meta?: any;
+}
+
+interface UpdateStudentData extends Partial<CreateStudentData> {
+  id: number;
+}
 
 export class StudentService {
   static async getById(id: number): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+    try {
+      const result = await db.select({
+        id: students.id,
+        organizationId: students.organizationId,
+        branchId: students.branchId,
+        userId: students.userId,
+        admissionNumber: students.admissionNumber,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        dob: students.dob,
+        gender: students.gender,
+        bloodGroup: students.bloodGroup,
+        photoUrl: students.photoUrl,
+        address: students.address,
+        phone: students.phone,
+        emergencyContact: students.emergencyContact,
+        profileUrl: students.profileUrl,
+        meta: students.meta,
+        isActive: sql<boolean>`NOT ${students.isDeleted}`,
+        createdAt: students.createdAt,
+        updatedAt: students.updatedAt,
+        // Current enrollment data
+        enrollmentId: enrollments.id,
+        gradeName: grades.name,
+        sectionName: sections.name,
+      })
+      .from(students)
+      .leftJoin(enrollments, and(
+        eq(students.id, enrollments.studentId),
+        eq(enrollments.status, 'ENROLLED'),
+        eq(enrollments.isDeleted, false)
+      ))
+      .leftJoin(academicYears, and(
+        eq(enrollments.academicYearId, academicYears.id),
+        eq(academicYears.isCurrent, true)
+      ))
+      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(sections, eq(enrollments.sectionId, sections.id))
+      .where(and(
+        eq(students.id, id),
+        eq(students.isDeleted, false)
+      ))
+      .limit(1);
+
+      if (result.length === 0) {
+        return { success: false, error: 'Student not found' };
+      }
+
+      return { success: true, data: result[0] };
+    } catch (error: any) {
+      console.error('Error fetching student by ID:', error);
+      return { success: false, error: error.message || 'Failed to fetch student' };
+    }
   }
 
-  static async getAll(organizationId: number, classId?: number): Promise<ServiceResponse<any[]>> {
-    return { success: false, error: 'Not implemented' };
+  static async getAll(filters: { 
+    organizationId?: number; 
+    branchId?: number; 
+    classId?: number;
+    search?: string;
+    isActive?: boolean;
+  } = {}): Promise<ServiceResponse<any[]>> {
+    try {
+      const whereConditions = [eq(students.isDeleted, false)];
+
+      if (filters.organizationId) {
+        whereConditions.push(eq(students.organizationId, filters.organizationId));
+      }
+
+      if (filters.branchId) {
+        whereConditions.push(eq(students.branchId, filters.branchId));
+      }
+
+      // TODO: Add search functionality when needed
+      // TODO: Add class-based filtering via enrollments table
+
+      const result = await db.select({
+        id: students.id,
+        organizationId: students.organizationId,
+        branchId: students.branchId,
+        userId: students.userId,
+        admissionNumber: students.admissionNumber,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        dob: students.dob,
+        gender: students.gender,
+        bloodGroup: students.bloodGroup,
+        photoUrl: students.photoUrl,
+        address: students.address,
+        phone: students.phone,
+        emergencyContact: students.emergencyContact,
+        profileUrl: students.profileUrl,
+        meta: students.meta,
+        isActive: sql<boolean>`NOT ${students.isDeleted}`,
+        createdAt: students.createdAt,
+        updatedAt: students.updatedAt,
+        // Current enrollment data
+        enrollmentId: enrollments.id,
+        gradeName: grades.name,
+        sectionName: sections.name,
+      })
+      .from(students)
+      .leftJoin(enrollments, and(
+        eq(students.id, enrollments.studentId),
+        eq(enrollments.status, 'ENROLLED'),
+        eq(enrollments.isDeleted, false)
+      ))
+      .leftJoin(academicYears, and(
+        eq(enrollments.academicYearId, academicYears.id),
+        eq(academicYears.isCurrent, true)
+      ))
+      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(sections, eq(enrollments.sectionId, sections.id))
+      .where(and(...whereConditions))
+      .orderBy(students.createdAt);
+
+      return { success: true, data: result };
+    } catch (error: any) {
+      console.error('Error fetching students:', error);
+      return { success: false, error: error.message || 'Failed to fetch students' };
+    }
   }
 
-  static async create(data: any): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+  static async create(data: CreateStudentData): Promise<ServiceResponse<any>> {
+    try {
+      // Generate admission number if not provided
+      let admissionNumber = data.admissionNumber;
+      if (!admissionNumber) {
+        const currentYear = new Date().getFullYear();
+        const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        admissionNumber = `${currentYear}/ADM/${randomNum}`;
+      }
+
+      const result = await db.insert(students).values({
+        organizationId: data.organizationId,
+        branchId: data.branchId,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        admissionNumber,
+        dob: data.dob,
+        gender: data.gender,
+        bloodGroup: data.bloodGroup,
+        address: data.address,
+        phone: data.phone,
+        emergencyContact: data.emergencyContact ? JSON.stringify(data.emergencyContact) : null,
+        photoUrl: data.photoUrl,
+        meta: data.meta ? JSON.stringify(data.meta) : null,
+      }).returning({
+        id: students.id,
+        organizationId: students.organizationId,
+        branchId: students.branchId,
+        userId: students.userId,
+        admissionNumber: students.admissionNumber,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        dob: students.dob,
+        gender: students.gender,
+        bloodGroup: students.bloodGroup,
+        photoUrl: students.photoUrl,
+        address: students.address,
+        phone: students.phone,
+        emergencyContact: students.emergencyContact,
+        profileUrl: students.profileUrl,
+        meta: students.meta,
+        isActive: sql<boolean>`NOT ${students.isDeleted}`,
+        createdAt: students.createdAt,
+        updatedAt: students.updatedAt
+      });
+
+      return { success: true, data: result[0] };
+    } catch (error: any) {
+      console.error('Error creating student:', error);
+      return { success: false, error: error.message || 'Failed to create student' };
+    }
   }
 
-  static async update(id: number, data: any): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+  static async update(data: UpdateStudentData): Promise<ServiceResponse<any>> {
+    try {
+      const updateData: any = {};
+      
+      if (data.firstName !== undefined) updateData.firstName = data.firstName;
+      if (data.lastName !== undefined) updateData.lastName = data.lastName;
+      if (data.admissionNumber !== undefined) updateData.admissionNumber = data.admissionNumber;
+      if (data.dob !== undefined) updateData.dob = data.dob;
+      if (data.gender !== undefined) updateData.gender = data.gender;
+      if (data.bloodGroup !== undefined) updateData.bloodGroup = data.bloodGroup;
+      if (data.address !== undefined) updateData.address = data.address;
+      if (data.phone !== undefined) updateData.phone = data.phone;
+      if (data.photoUrl !== undefined) updateData.photoUrl = data.photoUrl;
+      if (data.emergencyContact !== undefined) {
+        updateData.emergencyContact = data.emergencyContact ? JSON.stringify(data.emergencyContact) : null;
+      }
+      if (data.meta !== undefined) {
+        updateData.meta = data.meta ? JSON.stringify(data.meta) : null;
+      }
+
+      updateData.updatedAt = sql`CURRENT_TIMESTAMP`;
+
+      const result = await db.update(students)
+        .set(updateData)
+        .where(and(
+          eq(students.id, data.id),
+          eq(students.isDeleted, false)
+        ))
+        .returning({
+          id: students.id,
+          organizationId: students.organizationId,
+          branchId: students.branchId,
+          userId: students.userId,
+          admissionNumber: students.admissionNumber,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          dob: students.dob,
+          gender: students.gender,
+          bloodGroup: students.bloodGroup,
+          photoUrl: students.photoUrl,
+          address: students.address,
+          phone: students.phone,
+          emergencyContact: students.emergencyContact,
+          profileUrl: students.profileUrl,
+          meta: students.meta,
+          isActive: sql<boolean>`NOT ${students.isDeleted}`,
+          createdAt: students.createdAt,
+          updatedAt: students.updatedAt
+        });
+
+      if (result.length === 0) {
+        return { success: false, error: 'Student not found or already deleted' };
+      }
+
+      return { success: true, data: result[0] };
+    } catch (error: any) {
+      console.error('Error updating student:', error);
+      return { success: false, error: error.message || 'Failed to update student' };
+    }
   }
 
   static async delete(id: number): Promise<ServiceResponse<void>> {
-    return { success: false, error: 'Not implemented' };
+    try {
+      const result = await db.update(students)
+        .set({ 
+          isDeleted: true,
+          deletedAt: sql`CURRENT_TIMESTAMP`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(students.id, id),
+          eq(students.isDeleted, false)
+        ))
+        .returning({ id: students.id });
+
+      if (result.length === 0) {
+        return { success: false, error: 'Student not found or already deleted' };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error deleting student:', error);
+      return { success: false, error: error.message || 'Failed to delete student' };
+    }
   }
 
   static async getByClass(classId: number): Promise<ServiceResponse<any[]>> {

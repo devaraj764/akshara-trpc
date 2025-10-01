@@ -26,14 +26,16 @@ const updateClassSchema = z.object({
 const createSectionSchema = z.object({
   gradeId: z.number(),
   name: z.string().min(1, 'Section name is required'),
-  capacity: z.number().positive().optional(),
+  capacity: z.number().positive().nullable().optional().transform(val => val === null ? undefined : val),
   branchId: z.number(),
+  classTeacherId: z.number().nullable().optional().transform(val => val === null ? undefined : val),
 });
 
 const updateSectionSchema = z.object({
   id: z.number(),
   name: z.string().min(1).optional(),
-  capacity: z.number().positive().optional(),
+  capacity: z.number().positive().nullable().optional().transform(val => val === null ? undefined : val),
+  classTeacherId: z.number().nullable().optional().transform(val => val === null ? undefined : val),
 });
 
 export const classRouter = router({
@@ -49,14 +51,14 @@ export const classRouter = router({
         includeBranches: input?.includeBranches || false,
         organizationId: ctx.user.organizationId,
       });
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: result.error || 'Failed to fetch classes',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -67,14 +69,14 @@ export const classRouter = router({
     }))
     .query(async ({ input }) => {
       const result = await ClassService.getById(input.id, input.includeSections);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: result.error || 'Class not found',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -96,14 +98,14 @@ export const classRouter = router({
         organizationId: input.organizationId || ctx.user.organizationId,
         branchId: input.branchId || ctx.user.branchId,
       });
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to create class',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -111,19 +113,19 @@ export const classRouter = router({
     .input(updateClassSchema)
     .mutation(async ({ input, ctx }) => {
       const result = await ClassService.update(
-        input.id, 
-        input, 
-        ctx.user.role, 
+        input.id,
+        input,
+        ctx.user.role,
         ctx.user.organizationId
       );
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to update class',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -133,18 +135,18 @@ export const classRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const result = await ClassService.delete(
-        input.id, 
-        ctx.user.role, 
+        input.id,
+        ctx.user.role,
         ctx.user.organizationId
       );
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to delete class',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -152,14 +154,14 @@ export const classRouter = router({
   getGlobal: adminProcedure
     .query(async ({ ctx }) => {
       const result = await ClassService.getGlobal();
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to fetch global classes',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -171,7 +173,7 @@ export const classRouter = router({
     .query(async ({ input, ctx }) => {
       // Only SUPER_ADMIN can specify organizationId, others use their own
       let organizationId: number;
-      
+
       if (ctx.user.role === 'SUPER_ADMIN' && input?.organizationId) {
         organizationId = input.organizationId;
       } else {
@@ -185,14 +187,14 @@ export const classRouter = router({
       }
 
       const result = await ClassService.getEnabledForOrganization(organizationId);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to fetch enabled classes',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -204,7 +206,7 @@ export const classRouter = router({
     .query(async ({ input, ctx }) => {
       // For non-super admins, use their organization
       const organizationId = input.organizationId || ctx.user.organizationId;
-      
+
       if (!organizationId) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -221,15 +223,95 @@ export const classRouter = router({
       }
 
       const result = await ClassService.getPrivateForOrganization(organizationId);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to fetch private classes',
         });
       }
-      
+
       return result.data;
+    }),
+
+  getEnabledGrades: protectedProcedure
+    .input(z.object({ organizationId: z.number().int().positive().optional() }))
+    .query(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await ClassService.getEnabledGrades(organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to fetch enabled grades'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to fetch enabled grades'
+        });
+      }
+    }),
+
+  // Check removal info - determines if class should be deleted or just removed from enabled list
+  checkRemoval: adminProcedure
+    .input(z.object({
+      classId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await ClassService.checkRemoval(input.classId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to check removal info'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to check removal info'
+        });
+      }
+    }),
+
+  // Remove or delete class based on ownership and usage
+  removeOrDelete: adminProcedure
+    .input(z.object({
+      classId: z.number().int().positive(),
+      organizationId: z.number().int().positive().optional()
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const organizationId = input.organizationId || ctx.user.organizationId;
+        const result = await ClassService.removeOrDelete(input.classId, organizationId);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to remove or delete class'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to remove or delete class'
+        });
+      }
     }),
 });
 
@@ -241,7 +323,7 @@ export const sectionRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       const branchId = input.branchId || ctx.user.branchId;
-      
+
       if (!branchId) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -250,25 +332,25 @@ export const sectionRouter = router({
       }
 
       const result = await ClassService.getSectionsByBranch(branchId);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: result.error || 'Failed to fetch sections',
         });
       }
-      
+
       return result.data;
     }),
 
   getByClass: branchAdminProcedure
     .input(z.object({
       classId: z.number(),
-      branchId: z.number().optional(), // If not provided, use user's branch
+      includeDeleted: z.boolean().optional(), // If not provided, use user's branch
     }))
     .query(async ({ input, ctx }) => {
-      const branchId = input.branchId || ctx.user.branchId;
-      
+      const branchId = ctx.user.branchId;
+
       if (!branchId) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -276,15 +358,15 @@ export const sectionRouter = router({
         });
       }
 
-      const result = await ClassService.getSectionsByClass(input.classId, branchId);
-      
+      const result = await ClassService.getSectionsByClass(input.classId, branchId, input.includeDeleted);
+
       if (!result.success) {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: result.error || 'Failed to fetch sections',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -293,7 +375,7 @@ export const sectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Ensure branch admin can only create sections in their branch
       const branchId = ctx.user.branchId;
-      
+
       if (!branchId) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -309,14 +391,14 @@ export const sectionRouter = router({
       }
 
       const result = await ClassService.createSection(input);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to create section',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -325,14 +407,14 @@ export const sectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify the section belongs to the user's branch
       const result = await ClassService.updateSection(input.id, input, ctx.user.branchId!);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to update section',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -343,14 +425,14 @@ export const sectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify the section belongs to the user's branch
       const result = await ClassService.deleteSection(input.id, ctx.user.branchId!);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to delete section',
         });
       }
-      
+
       return result.data;
     }),
 
@@ -361,14 +443,14 @@ export const sectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify the section belongs to the user's branch
       const result = await ClassService.restoreSection(input.id, ctx.user.branchId!);
-      
+
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to restore section',
         });
       }
-      
+
       return result.data;
     }),
 });

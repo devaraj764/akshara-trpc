@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { branches, academicYears, organizations, enrollments, grades, sections, students, exams, parents, users, departments, staff, subjects, subjectAssignments, staffAttendance, attendance, studentAttendanceRecords, statistics, studentMedicalRecords, studentBehavioralRecords, studentDocuments, studentExtracurricularActivities, staffProfessionalHistory, staffBenefits, staffPerformanceEvaluations, staffCredentials, assets, noticeBoard, userRoles, periods, studentParents, examSchedule, marks, feeInvoices, feeInvoiceItems, feeItems, feePayments, staffSalaries, monthlyPayslips, auditLogs, notifications, files, academicCalendarEvents, classTeachers, timetables, feeTypes } from "./schema";
+import { branches, academicYears, organizations, enrollments, grades, sections, students, exams, subjects, staff, parents, users, departments, subjectAssignments, staffAttendance, attendance, studentAttendanceRecords, statistics, studentMedicalRecords, studentBehavioralRecords, studentDocuments, studentExtracurricularActivities, assets, noticeBoard, userRoles, periods, studentParents, examSchedule, marks, feeInvoices, feeInvoiceItems, feeItems, feePayments, staffSalaries, monthlyPayslips, auditLogs, notifications, files, academicCalendarEvents, classTeachers, timetables, feeTypes } from "./schema";
 
 export const academicYearsRelations = relations(academicYears, ({one, many}) => ({
 	branch: one(branches, {
@@ -21,10 +21,10 @@ export const branchesRelations = relations(branches, ({one, many}) => ({
 	academicYears: many(academicYears),
 	enrollments: many(enrollments),
 	exams: many(exams),
-	parents: many(parents),
-	staff: many(staff),
 	grades: many(grades),
 	sections: many(sections),
+	parents: many(parents),
+	staff: many(staff),
 	departments: many(departments),
 	statistics: many(statistics),
 	assets: many(assets),
@@ -32,7 +32,6 @@ export const branchesRelations = relations(branches, ({one, many}) => ({
 	users: many(users),
 	userRoles: many(userRoles),
 	periods: many(periods),
-	students: many(students),
 	attendances: many(attendance),
 	feeInvoices: many(feeInvoices),
 	staffSalaries: many(staffSalaries),
@@ -46,26 +45,28 @@ export const branchesRelations = relations(branches, ({one, many}) => ({
 	}),
 	academicCalendarEvents: many(academicCalendarEvents),
 	timetables: many(timetables),
+	students: many(students),
 	feeItems: many(feeItems),
 }));
 
 export const organizationsRelations = relations(organizations, ({many}) => ({
 	academicYears: many(academicYears),
-	parents: many(parents),
-	staff: many(staff),
 	subjects: many(subjects),
 	grades: many(grades),
+	sections: many(sections),
+	parents: many(parents),
+	staff: many(staff),
 	departments: many(departments),
 	statistics: many(statistics),
 	assets: many(assets),
 	noticeBoards: many(noticeBoard),
 	users: many(users),
 	userRoles: many(userRoles),
-	students: many(students),
 	staffSalaries: many(staffSalaries),
 	monthlyPayslips: many(monthlyPayslips),
 	auditLogs: many(auditLogs),
 	branches: many(branches),
+	students: many(students),
 	feeItems: many(feeItems),
 	feeTypes: many(feeTypes),
 }));
@@ -114,6 +115,14 @@ export const gradesRelations = relations(grades, ({one, many}) => ({
 
 export const sectionsRelations = relations(sections, ({one, many}) => ({
 	enrollments: many(enrollments),
+	organization: one(organizations, {
+		fields: [sections.organizationId],
+		references: [organizations.id]
+	}),
+	staff: one(staff, {
+		fields: [sections.classTeacherId],
+		references: [staff.id]
+	}),
 	branch: one(branches, {
 		fields: [sections.branchId],
 		references: [branches.id]
@@ -135,6 +144,9 @@ export const studentsRelations = relations(students, ({one, many}) => ({
 	studentBehavioralRecords: many(studentBehavioralRecords),
 	studentDocuments: many(studentDocuments),
 	studentExtracurricularActivities: many(studentExtracurricularActivities),
+	studentParents: many(studentParents),
+	marks: many(marks),
+	feeInvoices: many(feeInvoices),
 	branch: one(branches, {
 		fields: [students.branchId],
 		references: [branches.id]
@@ -147,9 +159,6 @@ export const studentsRelations = relations(students, ({one, many}) => ({
 		fields: [students.userId],
 		references: [users.id]
 	}),
-	studentParents: many(studentParents),
-	marks: many(marks),
-	feeInvoices: many(feeInvoices),
 }));
 
 export const examsRelations = relations(exams, ({one, many}) => ({
@@ -163,6 +172,41 @@ export const examsRelations = relations(exams, ({one, many}) => ({
 	}),
 	examSchedules: many(examSchedule),
 	marks: many(marks),
+}));
+
+export const subjectsRelations = relations(subjects, ({one, many}) => ({
+	organization: one(organizations, {
+		fields: [subjects.organizationId],
+		references: [organizations.id]
+	}),
+	subjectAssignments: many(subjectAssignments),
+	examSchedules: many(examSchedule),
+	marks: many(marks),
+	timetables: many(timetables),
+}));
+
+export const staffRelations = relations(staff, ({one, many}) => ({
+	sections: many(sections),
+	department: one(departments, {
+		fields: [staff.departmentId],
+		references: [departments.id]
+	}),
+	branch: one(branches, {
+		fields: [staff.branchId],
+		references: [branches.id]
+	}),
+	organization: one(organizations, {
+		fields: [staff.organizationId],
+		references: [organizations.id]
+	}),
+	user: one(users, {
+		fields: [staff.userId],
+		references: [users.id]
+	}),
+	subjectAssignments: many(subjectAssignments),
+	staffAttendances: many(staffAttendance),
+	classTeachers: many(classTeachers),
+	timetables: many(timetables),
 }));
 
 export const parentsRelations = relations(parents, ({one, many}) => ({
@@ -194,7 +238,6 @@ export const usersRelations = relations(users, ({one, many}) => ({
 		references: [organizations.id]
 	}),
 	userRoles: many(userRoles),
-	students: many(students),
 	studentParents: many(studentParents),
 	marks: many(marks),
 	feeInvoices: many(feeInvoices),
@@ -210,33 +253,7 @@ export const usersRelations = relations(users, ({one, many}) => ({
 	}),
 	auditLogs: many(auditLogs),
 	files: many(files),
-}));
-
-export const staffRelations = relations(staff, ({one, many}) => ({
-	department: one(departments, {
-		fields: [staff.departmentId],
-		references: [departments.id]
-	}),
-	branch: one(branches, {
-		fields: [staff.branchId],
-		references: [branches.id]
-	}),
-	organization: one(organizations, {
-		fields: [staff.organizationId],
-		references: [organizations.id]
-	}),
-	user: one(users, {
-		fields: [staff.userId],
-		references: [users.id]
-	}),
-	subjectAssignments: many(subjectAssignments),
-	staffAttendances: many(staffAttendance),
-	staffProfessionalHistories: many(staffProfessionalHistory),
-	staffBenefits: many(staffBenefits),
-	staffPerformanceEvaluations: many(staffPerformanceEvaluations),
-	staffCredentials: many(staffCredentials),
-	classTeachers: many(classTeachers),
-	timetables: many(timetables),
+	students: many(students),
 }));
 
 export const departmentsRelations = relations(departments, ({one, many}) => ({
@@ -249,17 +266,6 @@ export const departmentsRelations = relations(departments, ({one, many}) => ({
 		fields: [departments.branchId],
 		references: [branches.id]
 	}),
-}));
-
-export const subjectsRelations = relations(subjects, ({one, many}) => ({
-	organization: one(organizations, {
-		fields: [subjects.organizationId],
-		references: [organizations.id]
-	}),
-	subjectAssignments: many(subjectAssignments),
-	examSchedules: many(examSchedule),
-	marks: many(marks),
-	timetables: many(timetables),
 }));
 
 export const subjectAssignmentsRelations = relations(subjectAssignments, ({one}) => ({
@@ -351,34 +357,6 @@ export const studentExtracurricularActivitiesRelations = relations(studentExtrac
 	student: one(students, {
 		fields: [studentExtracurricularActivities.studentId],
 		references: [students.id]
-	}),
-}));
-
-export const staffProfessionalHistoryRelations = relations(staffProfessionalHistory, ({one}) => ({
-	staff: one(staff, {
-		fields: [staffProfessionalHistory.staffId],
-		references: [staff.id]
-	}),
-}));
-
-export const staffBenefitsRelations = relations(staffBenefits, ({one}) => ({
-	staff: one(staff, {
-		fields: [staffBenefits.staffId],
-		references: [staff.id]
-	}),
-}));
-
-export const staffPerformanceEvaluationsRelations = relations(staffPerformanceEvaluations, ({one}) => ({
-	staff: one(staff, {
-		fields: [staffPerformanceEvaluations.staffId],
-		references: [staff.id]
-	}),
-}));
-
-export const staffCredentialsRelations = relations(staffCredentials, ({one}) => ({
-	staff: one(staff, {
-		fields: [staffCredentials.staffId],
-		references: [staff.id]
 	}),
 }));
 

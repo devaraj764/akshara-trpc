@@ -698,4 +698,149 @@ export class SubjectService {
       };
     }
   }
+
+  // Check removal info - determines if subject should be deleted or just removed from enabled list
+  static async checkRemoval(subjectId: number, organizationId: number): Promise<ServiceResponse<any>> {
+    try {
+      // First, get the subject to check if it's private or global
+      const subjectResult = await this.getById(subjectId);
+      if (!subjectResult.success) {
+        return { success: false, error: 'Subject not found' };
+      }
+
+      const subject = subjectResult.data;
+      const isPrivate = subject.organizationId !== null;
+      
+      // Check if subject is currently used by any subject assignments (teacher assignments)
+      const usageResult = await db.select({
+        count: sql`COUNT(*)`.as('count')
+      })
+        .from(subjectAssignments)
+        .where(eq(subjectAssignments.subjectId, subjectId));
+
+      const usageCount = parseInt(usageResult[0]?.count as string) || 0;
+      const hasUsage = usageCount > 0;
+
+      let willDelete = false;
+      let message = '';
+
+      if (isPrivate) {
+        // Check if user belongs to same organization
+        if (subject.organizationId === organizationId) {
+          willDelete = true;
+          message = hasUsage 
+            ? `This private subject will be permanently deleted. ${usageCount} teacher assignment${usageCount !== 1 ? 's' : ''} currently use this subject.`
+            : 'This private subject will be permanently deleted from your organization.';
+        } else {
+          return { 
+            success: false, 
+            error: 'You do not have permission to delete this subject' 
+          };
+        }
+      } else {
+        // Global subject - just remove from enabled list
+        willDelete = false;
+        message = hasUsage
+          ? `This subject will be removed from your organization's enabled subjects. ${usageCount} teacher assignment${usageCount !== 1 ? 's' : ''} currently use this subject and should be reassigned.`
+          : 'This subject will be removed from your organization\'s enabled subjects.';
+      }
+
+      return {
+        success: true,
+        data: {
+          willDelete,
+          hasUsage,
+          usageCount,
+          message,
+          isPrivate,
+          subjectName: subject.name
+        }
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to check removal info' };
+    }
+  }
+
+  // Remove or delete subject based on ownership and usage
+  static async removeOrDelete(subjectId: number, organizationId: number): Promise<ServiceResponse<any>> {
+    try {
+      return await db.transaction(async (tx) => {
+        // First check what action should be taken
+        const checkResult = await this.checkRemoval(subjectId, organizationId);
+        if (!checkResult.success) {
+          return checkResult;
+        }
+
+        const { willDelete, hasUsage, usageCount } = checkResult.data;
+
+        if (willDelete) {
+          // Private subject - delete it entirely
+          if (hasUsage) {
+            // Remove subject assignments first
+            await tx.delete(subjectAssignments)
+              .where(eq(subjectAssignments.subjectId, subjectId));
+            console.warn(`Deleted ${usageCount} subject assignments for subject ${subjectId}`);
+          }
+
+          // Remove from all organizations' enabled lists first
+          const orgsWithThisSubject = await tx.select({
+            id: organizations.id,
+            enabledSubjects: organizations.enabledSubjects
+          })
+            .from(organizations)
+            .where(sql`${subjectId} = ANY(${organizations.enabledSubjects})`);
+
+          for (const org of orgsWithThisSubject) {
+            const updatedEnabled = (org.enabledSubjects || []).filter(id => id !== subjectId);
+            await tx.update(organizations)
+              .set({ enabledSubjects: updatedEnabled })
+              .where(eq(organizations.id, org.id));
+          }
+
+          // Soft delete the subject
+          const deleteResult = await tx.update(subjects)
+            .set({ isDeleted: true })
+            .where(eq(subjects.id, subjectId))
+            .returning();
+
+          return {
+            success: true,
+            data: {
+              action: 'deleted',
+              subject: deleteResult[0],
+              message: `Subject permanently deleted${hasUsage ? ` (removed ${usageCount} teacher assignments)` : ''}`
+            }
+          };
+        } else {
+          // Global subject - just remove from organization's enabled list
+          const orgResult = await tx.select({ enabledSubjects: organizations.enabledSubjects })
+            .from(organizations)
+            .where(eq(organizations.id, organizationId))
+            .limit(1);
+
+          if (orgResult.length === 0) {
+            return { success: false, error: 'Organization not found' };
+          }
+
+          const currentEnabled = orgResult[0]?.enabledSubjects || [];
+          const updatedEnabled = currentEnabled.filter(id => id !== subjectId);
+
+          await tx.update(organizations)
+            .set({ enabledSubjects: updatedEnabled })
+            .where(eq(organizations.id, organizationId));
+
+          return {
+            success: true,
+            data: {
+              action: 'removed',
+              enabledSubjects: updatedEnabled,
+              message: `Subject removed from organization${hasUsage ? ` (was used by ${usageCount} teacher assignments)` : ''}`
+            }
+          };
+        }
+      });
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to remove or delete subject' };
+    }
+  }
 }

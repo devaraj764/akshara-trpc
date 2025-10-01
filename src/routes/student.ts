@@ -1,41 +1,52 @@
 import { z } from 'zod';
-import { router, protectedProcedure, teacherProcedure, TRPCError } from '../trpc.js';
+import { router, protectedProcedure, branchAdminProcedure, adminProcedure, teacherProcedure, TRPCError } from '../trpc.js';
 import { StudentService } from '../services/studentService.js';
 
-const createStudentSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  dateOfBirth: z.string(),
+const emergencyContactSchema = z.object({
+  name: z.string(),
+  phone: z.string(),
+  relationship: z.string(),
   address: z.string().optional(),
-  parentName: z.string().optional(),
-  parentPhone: z.string().optional(),
-  emergencyContact: z.string().optional(),
-  classId: z.number(),
+});
+
+const createStudentSchema = z.object({
   organizationId: z.number(),
+  branchId: z.number(),
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().optional(),
+  admissionNumber: z.string().optional(),
+  dob: z.string().optional(),
+  gender: z.string().optional(),
+  bloodGroup: z.string().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+  emergencyContact: emergencyContactSchema.optional(),
+  photoUrl: z.string().optional(),
+  meta: z.any().optional(),
 });
 
 const updateStudentSchema = z.object({
   id: z.number(),
   firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  dateOfBirth: z.string().optional(),
+  lastName: z.string().optional(),
+  admissionNumber: z.string().optional(),
+  dob: z.string().optional(),
+  gender: z.string().optional(),
+  bloodGroup: z.string().optional(),
   address: z.string().optional(),
-  parentName: z.string().optional(),
-  parentPhone: z.string().optional(),
-  emergencyContact: z.string().optional(),
-  classId: z.number().optional(),
+  phone: z.string().optional(),
+  emergencyContact: emergencyContactSchema.optional(),
+  photoUrl: z.string().optional(),
+  meta: z.any().optional(),
 });
 
 export const studentRouter = router({
+  // Get student by ID
   getById: protectedProcedure
     .input(z.object({
       id: z.number(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const result = await StudentService.getById(input.id);
       
       if (!result.success) {
@@ -48,13 +59,24 @@ export const studentRouter = router({
       return result.data;
     }),
 
-  getAll: teacherProcedure
+  // Get all students with filtering
+  getAll: branchAdminProcedure
     .input(z.object({
-      organizationId: z.number(),
-      classId: z.number().optional(),
-    }))
-    .query(async ({ input }) => {
-      const result = await StudentService.getAll(input.organizationId, input.classId);
+      organizationId: z.number().optional(),
+      branchId: z.number().optional(),
+      search: z.string().optional(),
+      isActive: z.boolean().optional(),
+    }).optional())
+    .query(async ({ input, ctx }) => {
+      // For non-admin users, use their organization/branch context
+      const filters = {
+        organizationId: ctx.user.role === 'SUPER_ADMIN' ? input?.organizationId : ctx.user.organizationId,
+        branchId: ctx.user.role === 'ADMIN' || ctx.user.role === 'SUPER_ADMIN' ? input?.branchId : ctx.user.branchId,
+        search: input?.search,
+        isActive: input?.isActive,
+      };
+
+      const result = await StudentService.getAll(filters);
       
       if (!result.success) {
         throw new TRPCError({
@@ -66,10 +88,18 @@ export const studentRouter = router({
       return result.data;
     }),
 
-  create: teacherProcedure
+  // Create new student
+  create: branchAdminProcedure
     .input(createStudentSchema)
-    .mutation(async ({ input }) => {
-      const result = await StudentService.create(input);
+    .mutation(async ({ input, ctx }) => {
+      // Ensure user can only create students in their organization/branch
+      const studentData = {
+        ...input,
+        organizationId: ctx.user.organizationId || input.organizationId,
+        branchId: ctx.user.role === 'ADMIN' || ctx.user.role === 'SUPER_ADMIN' ? input.branchId : ctx.user.branchId,
+      };
+
+      const result = await StudentService.create(studentData);
       
       if (!result.success) {
         throw new TRPCError({
@@ -81,10 +111,30 @@ export const studentRouter = router({
       return result.data;
     }),
 
-  update: teacherProcedure
+  // Update student
+  update: branchAdminProcedure
     .input(updateStudentSchema)
-    .mutation(async ({ input }) => {
-      const result = await StudentService.update(input.id, input);
+    .mutation(async ({ input, ctx }) => {
+      // First check if student exists and user has permission
+      const existingStudent = await StudentService.getById(input.id);
+      if (!existingStudent.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      // Check permissions
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (existingStudent.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only update students in your branch',
+          });
+        }
+      }
+
+      const result = await StudentService.update(input);
       
       if (!result.success) {
         throw new TRPCError({
@@ -96,11 +146,31 @@ export const studentRouter = router({
       return result.data;
     }),
 
-  delete: teacherProcedure
+  // Delete student (soft delete)
+  delete: branchAdminProcedure
     .input(z.object({
       id: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      // First check if student exists and user has permission
+      const existingStudent = await StudentService.getById(input.id);
+      if (!existingStudent.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      // Check permissions
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (existingStudent.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only delete students in your branch',
+          });
+        }
+      }
+
       const result = await StudentService.delete(input.id);
       
       if (!result.success) {
@@ -110,9 +180,10 @@ export const studentRouter = router({
         });
       }
       
-      return result.data;
+      return { success: true };
     }),
 
+  // Get students by class
   getByClass: teacherProcedure
     .input(z.object({
       classId: z.number(),

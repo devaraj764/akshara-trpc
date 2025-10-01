@@ -1,28 +1,24 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import db from '../db/index.js';
 import { 
   staff, 
   organizations, 
   branches, 
+  departments,
   users, 
-  userRoles,
-  staffProfessionalHistory,
-  staffBenefits,
-  staffPerformanceEvaluations,
-  staffCredentials
+  userRoles
 } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
 export interface CreateStaffData {
-  userId?: number;
   organizationId: number;
   branchId: number; // Required in current database schema
   employeeNumber?: string | undefined;
   firstName: string;
   lastName?: string | undefined;
-  phone?: string | undefined;
-  email?: string | undefined;
+  phone: string; // Required for staff creation
+  email: string; // Required for staff creation
   address?: string | undefined;
   dob?: string | undefined;
   gender?: string | undefined;
@@ -32,12 +28,6 @@ export interface CreateStaffData {
   departmentId?: number | undefined;
   employeeType?: string | undefined;
   meta?: any; // For teacher qualifications and other custom data
-  // Fields for automatic user creation
-  createUser?: boolean;
-  userEmail?: string;
-  userDisplayName?: string;
-  userPhone?: string;
-  createdByUserId?: number;
 }
 
 export interface UpdateStaffData {
@@ -58,6 +48,10 @@ export interface UpdateStaffData {
   meta?: any;
 }
 
+export interface ConnectUserAccountData {
+  staffId: number;
+}
+
 export interface GetStaffOptions {
   organizationId?: number | undefined;
   branchId?: number | undefined;
@@ -66,6 +60,14 @@ export interface GetStaffOptions {
   isActive?: boolean | undefined;
   includeDepartmentInfo?: boolean | undefined;
   includeUserInfo?: boolean | undefined;
+}
+
+export interface CheckExistingStaffOptions {
+  email?: string | undefined;
+  phone?: string | undefined;
+  excludeStaffId?: number | undefined;
+  organizationId?: number | undefined;
+  branchId?: number | undefined;
 }
 
 export class StaffService {
@@ -120,11 +122,10 @@ export class StaffService {
         // Include branch info
         branchName: branches.name,
         // Include department info if requested
-        // Department info temporarily disabled due to schema mismatch
-        // ...(options.includeDepartmentInfo ? {
-        //   departmentName: departments.name,
-        //   departmentCode: departments.code
-        // } : {}),
+        ...(options.includeDepartmentInfo ? {
+          departmentName: departments.name,
+          departmentCode: departments.code
+        } : {}),
         // Include user info if requested
         ...(options.includeUserInfo ? {
           userEmail: users.email,
@@ -135,7 +136,7 @@ export class StaffService {
         .from(staff)
         .leftJoin(organizations, eq(staff.organizationId, organizations.id))
         .leftJoin(branches, eq(staff.branchId, branches.id))
-        // .leftJoin(departments, eq(staff.departmentId, departments.id)) // departmentId field doesn't exist
+        .leftJoin(departments, eq(staff.departmentId, departments.id))
         .leftJoin(users, eq(staff.userId, users.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
         .orderBy(staff.firstName, staff.lastName);
@@ -189,8 +190,8 @@ export class StaffService {
         updatedAt: staff.updatedAt,
         organizationName: organizations.name,
         branchName: branches.name,
-        // departmentName: departments.name, // Field doesn't exist in current database
-        // departmentCode: departments.code, // Field doesn't exist in current database
+        departmentName: departments.name,
+        departmentCode: departments.code,
         userEmail: users.email,
         userDisplayName: users.displayName,
         userIsActive: users.isActive
@@ -198,7 +199,7 @@ export class StaffService {
         .from(staff)
         .leftJoin(organizations, eq(staff.organizationId, organizations.id))
         .leftJoin(branches, eq(staff.branchId, branches.id))
-        // .leftJoin(departments, eq(staff.departmentId, departments.id)) // departmentId field doesn't exist
+        .leftJoin(departments, eq(staff.departmentId, departments.id))
         .leftJoin(users, eq(staff.userId, users.id))
         .where(and(...whereConditions))
         .limit(1);
@@ -223,235 +224,86 @@ export class StaffService {
   }
 
   static async create(data: CreateStaffData): Promise<ServiceResponse<any>> {
-    return await db.transaction(async (tx) => {
-      try {
-        // Validate required fields for current database schema
-        if (!data.branchId) {
-          return {
-            success: false,
-            error: 'branchId is required'
-          };
-        }
-
-        // Generate employee number automatically if not provided
-        let employeeNumber = data.employeeNumber;
-        if (!employeeNumber) {
-          try {
-            // Get count of existing staff in the organization for auto-generation
-            const staffCount = await tx.select({ count: sql<number>`count(*)` })
-              .from(staff)
-              .where(
-                eq(staff.organizationId, data.organizationId)
-              );
-
-            const nextNumber = (staffCount[0]?.count || 0) + 1;
-            const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
-            employeeNumber = `${employeeTypePrefix}${nextNumber.toString().padStart(4, '0')}`;
-
-            console.log(`Generated employee number: ${employeeNumber} for ${data.employeeType}`);
-          } catch (error) {
-            console.error('Error generating employee number:', error);
-            // Fallback to timestamp-based ID if count fails
-            const timestamp = Date.now().toString().slice(-6);
-            const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
-            employeeNumber = `${employeeTypePrefix}${timestamp}`;
-          }
-        }
-
-        // First, create the staff record with a temporary userId (we'll update it later)
-        const staffResult = await tx.insert(staff).values({
-          userId: data.userId || 1, // Temporary userId, will be updated after user creation
-          organizationId: data.organizationId,
-          branchId: data.branchId,
-          employeeNumber: employeeNumber,
-          firstName: data.firstName,
-          lastName: data.lastName || null,
-          phone: data.phone || null,
-          email: data.email || null,
-          address: data.address || null,
-          dob: data.dob || null,
-          gender: data.gender || null,
-          position: data.position || null,
-          emergencyContact: data.emergencyContact || null,
-          hireDate: data.hireDate || null,
-          departmentId: data.departmentId || null,
-          employeeType: data.employeeType || 'STAFF',
-          meta: data.meta || null
-        }).returning();
-
-        const createdStaff = staffResult[0];
-        if (!createdStaff) {
-          return {
-            success: false,
-            error: 'Failed to create staff record'
-          };
-        }
-
-        let userId = data.userId;
-
-        // Create user account if needed (for teachers and staff who need login access)
-        if (!userId && (data.employeeType === 'TEACHER' || data.employeeType === 'STAFF')) {
-          try {
-            // Generate password based on first 4 letters of name + DOB
-            const namePrefix = data.firstName.substring(0, 4).toLowerCase();
-            const dobSuffix = data.dob ? data.dob.replace(/[-\/]/g, '') : '0000';
-            const generatedPassword = namePrefix + dobSuffix;
-
-            let userEmail = data.userEmail;
-            
-            // For teachers, require email. For staff, generate if not provided
-            if (data.employeeType === 'TEACHER') {
-              if (!userEmail) {
-                return {
-                  success: false,
-                  error: 'Email is required for teacher accounts'
-                };
-              }
-              
-              // Check if user with this email already exists
-              const existingUser = await tx.select()
-                .from(users)
-                .where(and(
-                  eq(users.email, userEmail),
-                  eq(users.organizationId, data.organizationId)
-                ))
-                .limit(1);
-
-              if (existingUser.length > 0) {
-                userId = existingUser[0]?.id;
-                console.log(`Using existing user account for teacher: ${userEmail}`);
-              } else if (data.createUser) {
-                // Create new teacher account within transaction
-                // Validate email format
-                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                if (!emailRegex.test(userEmail)) {
-                  return { success: false, error: 'Invalid email format' };
-                }
-
-                // Hash password
-                const passwordHash = await bcrypt.hash(generatedPassword, 12);
-
-                // Create user within transaction
-                const newUsers = await tx.insert(users).values({
-                  email: userEmail.toLowerCase(),
-                  passwordHash,
-                  displayName: data.userDisplayName || `${data.firstName} ${data.lastName || ''}`.trim(),
-                  phone: data.userPhone || null,
-                  organizationId: data.organizationId,
-                  branchId: data.branchId,
-                  isActive: true,
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString()
-                }).returning();
-
-                const newUser = newUsers[0];
-                if (!newUser) {
-                  return { success: false, error: 'Failed to create teacher user account' };
-                }
-
-                userId = newUser.id;
-
-                // Add STAFF role (base role for branch members)
-                await tx.insert(userRoles).values({
-                  userId: userId,
-                  role: 'STAFF',
-                  organizationId: data.organizationId,
-                  branchId: data.branchId
-                });
-
-                // Add TEACHER role
-                await tx.insert(userRoles).values({
-                  userId: userId,
-                  role: 'TEACHER',
-                  organizationId: data.organizationId,
-                  branchId: data.branchId
-                });
-
-                console.log(`Created teacher account: ${userEmail} (Employee: ${employeeNumber}, Password: ${generatedPassword})`);
-              } else {
-                return {
-                  success: false,
-                  error: 'User account is required for teachers but email not found and createUser not enabled'
-                };
-              }
-            } else if (data.employeeType === 'STAFF' && data.createUser) {
-              // Create staff user account within transaction
-              userEmail = data.email || userEmail || `${employeeNumber.toLowerCase()}@${data.organizationId}.local`;
-              
-              // Validate email format
-              const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-              if (!emailRegex.test(userEmail)) {
-                return { success: false, error: 'Invalid email format' };
-              }
-
-              // Hash password
-              const passwordHash = await bcrypt.hash(generatedPassword, 12);
-
-              // Create user within transaction
-              const newUsers = await tx.insert(users).values({
-                email: userEmail.toLowerCase(),
-                passwordHash,
-                displayName: `${data.firstName} ${data.lastName || ''}`.trim(),
-                phone: data.phone || null,
-                organizationId: data.organizationId,
-                branchId: data.branchId,
-                isActive: true,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              }).returning();
-
-              const newUser = newUsers[0];
-              if (!newUser) {
-                return { success: false, error: 'Failed to create staff user account' };
-              }
-
-              userId = newUser.id;
-
-              // Add STAFF role
-              await tx.insert(userRoles).values({
-                userId: userId,
-                role: 'STAFF',
-                organizationId: data.organizationId,
-                branchId: data.branchId
-              });
-
-              console.log(`Created staff account: ${userEmail} (Employee: ${employeeNumber}, Password: ${generatedPassword})`);
-            }
-          } catch (userError: any) {
-            return {
-              success: false,
-              error: `Failed to create user account: ${userError.message}`
-            };
-          }
-        }
-
-        // Update the staff record with the correct userId
-        if (userId && userId !== createdStaff.userId) {
-          await tx.update(staff)
-            .set({ userId: userId })
-            .where(eq(staff.id, createdStaff.id));
-          
-          createdStaff.userId = userId;
-        }
-
-        return {
-          success: true,
-          data: createdStaff
-        };
-      } catch (error: any) {
-        console.log(error);
-        if (error.constraint?.includes('uq_staff_employee_number')) {
-          return {
-            success: false,
-            error: 'Employee number already exists in this branch'
-          };
-        }
+    try {
+      // Validate required fields for current database schema
+      if (!data.branchId) {
         return {
           success: false,
-          error: error.message || 'Failed to create staff member'
+          error: 'branchId is required'
         };
       }
-    });
+
+      // Generate employee number automatically if not provided
+      let employeeNumber = data.employeeNumber;
+      if (!employeeNumber) {
+        try {
+          // Get count of existing staff in the organization for auto-generation
+          const staffCount = await db.select({ count: sql<number>`count(*)` })
+            .from(staff)
+            .where(
+              eq(staff.organizationId, data.organizationId)
+            );
+
+          const nextNumber = (staffCount[0]?.count || 0) + 1;
+          const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
+          employeeNumber = `${employeeTypePrefix}${nextNumber.toString().padStart(4, '0')}`;
+
+          console.log(`Generated employee number: ${employeeNumber} for ${data.employeeType}`);
+        } catch (error) {
+          console.error('Error generating employee number:', error);
+          // Fallback to timestamp-based ID if count fails
+          const timestamp = Date.now().toString().slice(-6);
+          const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
+          employeeNumber = `${employeeTypePrefix}${timestamp}`;
+        }
+      }
+
+      // Create the staff record without user account
+      const staffResult = await db.insert(staff).values({
+        userId: null, // No user account initially
+        organizationId: data.organizationId,
+        branchId: data.branchId,
+        employeeNumber: employeeNumber,
+        firstName: data.firstName,
+        lastName: data.lastName || null,
+        phone: data.phone, // Required field
+        email: data.email, // Required field
+        address: data.address || null,
+        dob: data.dob || null,
+        gender: data.gender || null,
+        position: data.position || null,
+        emergencyContact: data.emergencyContact || null,
+        hireDate: data.hireDate || null,
+        departmentId: data.departmentId || null,
+        employeeType: data.employeeType || 'STAFF',
+        meta: data.meta || null
+      }).returning();
+
+      const createdStaff = staffResult[0];
+      if (!createdStaff) {
+        return {
+          success: false,
+          error: 'Failed to create staff record'
+        };
+      }
+
+      return {
+        success: true,
+        data: createdStaff
+      };
+    } catch (error: any) {
+      console.log(error);
+      if (error.constraint?.includes('uq_staff_employee_number')) {
+        return {
+          success: false,
+          error: 'Employee number already exists in this branch'
+        };
+      }
+      return {
+        success: false,
+        error: error.message || 'Failed to create staff member'
+      };
+    }
   }
 
   static async update(id: number, data: UpdateStaffData, userBranchId?: number): Promise<ServiceResponse<any>> {
@@ -668,290 +520,237 @@ export class StaffService {
     }
   }
 
-  // Staff Professional History Methods
-  static async addProfessionalHistory(staffId: number, historyData: any): Promise<ServiceResponse<any>> {
-    try {
-      const result = await db.insert(staffProfessionalHistory).values({
-        staffId,
-        organizationName: historyData.organizationName,
-        position: historyData.position,
-        startDate: historyData.startDate,
-        endDate: historyData.endDate || null,
-        responsibilities: historyData.responsibilities || null,
-        reasonForLeaving: historyData.reasonForLeaving || null,
-        supervisorName: historyData.supervisorName || null,
-        supervisorContact: historyData.supervisorContact || null,
-        salary: historyData.salary || null,
-        achievements: historyData.achievements || null
-      }).returning();
+  static async connectOrCreateUserAccount(data: ConnectUserAccountData): Promise<ServiceResponse<any>> {
+    return await db.transaction(async (tx) => {
+      try {
+        // First check if staff exists and get all needed information
+        const staffRecord = await tx.select({
+          id: staff.id,
+          userId: staff.userId,
+          organizationId: staff.organizationId,
+          branchId: staff.branchId,
+          firstName: staff.firstName,
+          lastName: staff.lastName,
+          phone: staff.phone,
+          email: staff.email,
+          dob: staff.dob,
+          employeeType: staff.employeeType
+        })
+          .from(staff)
+          .where(eq(staff.id, data.staffId))
+          .limit(1);
 
-      return { success: true, data: result[0] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to add professional history' };
-    }
+        if (staffRecord.length === 0) {
+          return {
+            success: false,
+            error: 'Staff member not found'
+          };
+        }
+
+        const staffMember = staffRecord[0]!;
+
+        // Check if staff already has a user account
+        if (staffMember.userId) {
+          return {
+            success: false,
+            error: 'Staff member already has a user account'
+          };
+        }
+
+        // Check if staff has an email address
+        if (!staffMember.email) {
+          return {
+            success: false,
+            error: 'Staff member must have an email address to create user account'
+          };
+        }
+
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(staffMember.email)) {
+          return {
+            success: false,
+            error: 'Staff member email address is not valid'
+          };
+        }
+
+        // Check if user with this email already exists in the organization
+        const existingUser = await tx.select()
+          .from(users)
+          .where(and(
+            eq(users.email, staffMember.email.toLowerCase()),
+            eq(users.organizationId, staffMember.organizationId)
+          ))
+          .limit(1);
+
+        let userId: number;
+
+        if (existingUser.length > 0) {
+          // Connect to existing user
+          userId = existingUser[0]!.id;
+          console.log(`Connecting staff to existing user account: ${staffMember.email}`);
+        } else {
+          // Create new user account
+          // Generate password: first 4 letters of name + DOB
+          const namePrefix = staffMember.firstName.substring(0, 4).toLowerCase();
+          const dobSuffix = staffMember.dob ? staffMember.dob.replace(/[-\/]/g, '') : '0000';
+          const generatedPassword = namePrefix + dobSuffix;
+
+          // Hash password
+          const passwordHash = await bcrypt.hash(generatedPassword, 12);
+
+          // Create user
+          const newUsers = await tx.insert(users).values({
+            email: staffMember.email.toLowerCase(),
+            passwordHash,
+            displayName: `${staffMember.firstName} ${staffMember.lastName || ''}`.trim(),
+            phone: staffMember.phone || null,
+            organizationId: staffMember.organizationId,
+            branchId: staffMember.branchId,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }).returning();
+
+          const newUser = newUsers[0];
+          if (!newUser) {
+            return {
+              success: false,
+              error: 'Failed to create user account'
+            };
+          }
+
+          userId = newUser.id;
+
+          // Add appropriate roles based on employee type
+          // Add STAFF role (base role for all staff members)
+          await tx.insert(userRoles).values({
+            userId: userId,
+            role: 'STAFF',
+            organizationId: staffMember.organizationId,
+            branchId: staffMember.branchId
+          });
+
+          // Add TEACHER role if employee is a teacher
+          if (staffMember.employeeType === 'TEACHER') {
+            await tx.insert(userRoles).values({
+              userId: userId,
+              role: 'TEACHER',
+              organizationId: staffMember.organizationId,
+              branchId: staffMember.branchId
+            });
+          }
+
+          console.log(`Created user account: ${staffMember.email} (Password: ${generatedPassword})`);
+        }
+
+        // Update staff record with userId
+        const updatedStaff = await tx.update(staff)
+          .set({
+            userId: userId,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(staff.id, data.staffId))
+          .returning();
+
+        return {
+          success: true,
+          data: {
+            staff: updatedStaff[0],
+            userCreated: existingUser.length === 0,
+            userId: userId
+          }
+        };
+      } catch (error: any) {
+        console.error('Error connecting/creating user account:', error);
+        return {
+          success: false,
+          error: error.message || 'Failed to connect or create user account'
+        };
+      }
+    });
   }
 
-  static async getProfessionalHistory(staffId: number): Promise<ServiceResponse<any[]>> {
+  static async checkExistingStaff(options: CheckExistingStaffOptions): Promise<ServiceResponse<any>> {
     try {
-      const result = await db.select()
-        .from(staffProfessionalHistory)
-        .where(eq(staffProfessionalHistory.staffId, staffId))
-        .orderBy(staffProfessionalHistory.startDate);
+      const whereConditions = [];
 
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch professional history' };
-    }
-  }
+      // Add organization filter
+      if (options.organizationId) {
+        whereConditions.push(eq(staff.organizationId, options.organizationId));
+      }
 
-  // Staff Benefits Methods
-  static async addBenefit(staffId: number, benefitData: any): Promise<ServiceResponse<any>> {
-    try {
-      const result = await db.insert(staffBenefits).values({
-        staffId,
-        benefitType: benefitData.benefitType,
-        benefitName: benefitData.benefitName,
-        description: benefitData.description || null,
-        amountValue: benefitData.amountValue || null,
-        percentageValue: benefitData.percentageValue || null,
-        isActive: benefitData.isActive ?? true,
-        effectiveFrom: benefitData.effectiveFrom,
-        effectiveTo: benefitData.effectiveTo || null,
-        eligibilityCriteria: benefitData.eligibilityCriteria || null,
-        benefitDetails: benefitData.benefitDetails || null
-      }).returning();
+      // Add branch filter for branch admins
+      if (options.branchId) {
+        whereConditions.push(eq(staff.branchId, options.branchId));
+      }
 
-      return { success: true, data: result[0] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to add benefit' };
-    }
-  }
+      // Exclude current staff when editing
+      if (options.excludeStaffId) {
+        whereConditions.push(sql`${staff.id} != ${options.excludeStaffId}`);
+      }
 
-  static async getStaffBenefits(staffId: number, isActive?: boolean): Promise<ServiceResponse<any[]>> {
-    try {
-      const whereConditions = [eq(staffBenefits.staffId, staffId)];
+      // Build email/phone conditions
+      const contactConditions = [];
       
-      if (isActive !== undefined) {
-        whereConditions.push(eq(staffBenefits.isActive, isActive));
+      if (options.email) {
+        contactConditions.push(eq(staff.email, options.email.toLowerCase()));
+      }
+      
+      if (options.phone) {
+        contactConditions.push(eq(staff.phone, options.phone));
       }
 
-      const result = await db.select()
-        .from(staffBenefits)
-        .where(and(...whereConditions))
-        .orderBy(staffBenefits.effectiveFrom);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch staff benefits' };
-    }
-  }
-
-  // Staff Performance Evaluations Methods
-  static async addPerformanceEvaluation(staffId: number, evaluationData: any): Promise<ServiceResponse<any>> {
-    try {
-      const result = await db.insert(staffPerformanceEvaluations).values({
-        staffId,
-        evaluationPeriod: evaluationData.evaluationPeriod,
-        evaluationDate: evaluationData.evaluationDate,
-        evaluatorId: evaluationData.evaluatorId || null,
-        overallRating: evaluationData.overallRating || null,
-        teachingEffectiveness: evaluationData.teachingEffectiveness || null,
-        classroomManagement: evaluationData.classroomManagement || null,
-        professionalDevelopment: evaluationData.professionalDevelopment || null,
-        collaboration: evaluationData.collaboration || null,
-        punctuality: evaluationData.punctuality || null,
-        strengths: evaluationData.strengths || null,
-        areasForImprovement: evaluationData.areasForImprovement || null,
-        goalsNextPeriod: evaluationData.goalsNextPeriod || null,
-        actionPlan: evaluationData.actionPlan || null,
-        evaluatorComments: evaluationData.evaluatorComments || null,
-        staffComments: evaluationData.staffComments || null,
-        isFinal: evaluationData.isFinal ?? false
-      }).returning();
-
-      return { success: true, data: result[0] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to add performance evaluation' };
-    }
-  }
-
-  static async getPerformanceEvaluations(staffId: number): Promise<ServiceResponse<any[]>> {
-    try {
-      const result = await db.select()
-        .from(staffPerformanceEvaluations)
-        .where(eq(staffPerformanceEvaluations.staffId, staffId))
-        .orderBy(staffPerformanceEvaluations.evaluationDate);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch performance evaluations' };
-    }
-  }
-
-  // Staff Credentials Methods
-  static async addCredential(staffId: number, credentialData: any): Promise<ServiceResponse<any>> {
-    try {
-      const result = await db.insert(staffCredentials).values({
-        staffId,
-        credentialType: credentialData.credentialType,
-        credentialName: credentialData.credentialName,
-        issuingAuthority: credentialData.issuingAuthority,
-        credentialNumber: credentialData.credentialNumber || null,
-        issueDate: credentialData.issueDate || null,
-        expiryDate: credentialData.expiryDate || null,
-        documentUrl: credentialData.documentUrl || null,
-        isVerified: credentialData.isVerified ?? false,
-        verificationDate: credentialData.verificationDate || null,
-        notes: credentialData.notes || null
-      }).returning();
-
-      return { success: true, data: result[0] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to add credential' };
-    }
-  }
-
-  static async getStaffCredentials(staffId: number): Promise<ServiceResponse<any[]>> {
-    try {
-      const result = await db.select()
-        .from(staffCredentials)
-        .where(eq(staffCredentials.staffId, staffId))
-        .orderBy(staffCredentials.expiryDate);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch staff credentials' };
-    }
-  }
-
-  static async getExpiringCredentials(daysAhead: number = 30, organizationId?: number, branchId?: number): Promise<ServiceResponse<any[]>> {
-    try {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + daysAhead);
-
-      const whereConditions = [
-        sql`${staffCredentials.expiryDate} <= ${futureDate.toISOString()}`,
-        sql`${staffCredentials.expiryDate} >= CURRENT_DATE`
-      ];
-
-      if (organizationId) {
-        whereConditions.push(eq(staff.organizationId, organizationId));
+      // If no contact info provided, return no matches
+      if (contactConditions.length === 0) {
+        return {
+          success: true,
+          data: {
+            exists: false,
+            matchedStaff: []
+          }
+        };
       }
 
-      if (branchId) {
-        whereConditions.push(eq(staff.branchId, branchId));
-      }
+      // Combine all conditions
+      const contactOrCondition = contactConditions.length === 1 
+        ? contactConditions[0] 
+        : or(...contactConditions);
+
+      const finalConditions = whereConditions.length > 0 
+        ? and(...whereConditions, contactOrCondition)
+        : contactOrCondition;
 
       const result = await db.select({
-        id: staffCredentials.id,
-        staffId: staffCredentials.staffId,
-        credentialName: staffCredentials.credentialName,
-        credentialType: staffCredentials.credentialType,
-        expiryDate: staffCredentials.expiryDate,
-        staffName: sql<string>`CONCAT(${staff.firstName}, ' ', ${staff.lastName})`,
-        staffEmail: staff.email,
-        organizationName: organizations.name,
+        id: staff.id,
+        firstName: staff.firstName,
+        lastName: staff.lastName,
+        email: staff.email,
+        phone: staff.phone,
+        employeeNumber: staff.employeeNumber,
+        employeeType: staff.employeeType,
+        departmentName: departments.name,
         branchName: branches.name
       })
-        .from(staffCredentials)
-        .leftJoin(staff, eq(staffCredentials.staffId, staff.id))
-        .leftJoin(organizations, eq(staff.organizationId, organizations.id))
-        .leftJoin(branches, eq(staff.branchId, branches.id))
-        .where(and(...whereConditions))
-        .orderBy(staffCredentials.expiryDate);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch expiring credentials' };
-    }
-  }
-
-  // Organization and Branch Level Methods
-  static async getOrganizationStaffPerformance(organizationId: number, period?: string): Promise<ServiceResponse<any[]>> {
-    try {
-      const whereConditions = [eq(staff.organizationId, organizationId)];
-      
-      if (period) {
-        whereConditions.push(eq(staffPerformanceEvaluations.evaluationPeriod, period));
-      }
-
-      const result = await db.select({
-        staffId: staff.id,
-        staffName: sql<string>`CONCAT(${staff.firstName}, ' ', ${staff.lastName})`,
-        employeeNumber: staff.employeeNumber,
-        position: staff.position,
-        branchName: branches.name,
-        evaluationPeriod: staffPerformanceEvaluations.evaluationPeriod,
-        evaluationDate: staffPerformanceEvaluations.evaluationDate,
-        overallRating: staffPerformanceEvaluations.overallRating,
-        teachingEffectiveness: staffPerformanceEvaluations.teachingEffectiveness,
-        isFinal: staffPerformanceEvaluations.isFinal
-      })
         .from(staff)
+        .leftJoin(departments, eq(staff.departmentId, departments.id))
         .leftJoin(branches, eq(staff.branchId, branches.id))
-        .leftJoin(staffPerformanceEvaluations, eq(staff.id, staffPerformanceEvaluations.staffId))
-        .where(and(...whereConditions))
-        .orderBy(staffPerformanceEvaluations.evaluationDate);
+        .where(finalConditions)
+        .limit(5); // Limit to avoid too many results
 
-      return { success: true, data: result };
+      return {
+        success: true,
+        data: {
+          exists: result.length > 0,
+          matchedStaff: result
+        }
+      };
     } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch organization staff performance' };
+      return {
+        success: false,
+        error: error.message || 'Failed to check existing staff'
+      };
     }
   }
 
-  static async getBranchStaffCredentials(branchId: number): Promise<ServiceResponse<any[]>> {
-    try {
-      const result = await db.select({
-        staffId: staff.id,
-        staffName: sql<string>`CONCAT(${staff.firstName}, ' ', ${staff.lastName})`,
-        employeeNumber: staff.employeeNumber,
-        position: staff.position,
-        credentialType: staffCredentials.credentialType,
-        credentialName: staffCredentials.credentialName,
-        expiryDate: staffCredentials.expiryDate,
-        isVerified: staffCredentials.isVerified
-      })
-        .from(staff)
-        .leftJoin(staffCredentials, eq(staff.id, staffCredentials.staffId))
-        .where(eq(staff.branchId, branchId))
-        .orderBy(staff.firstName, staffCredentials.expiryDate);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch branch staff credentials' };
-    }
-  }
-
-  static async getOrganizationStaffBenefits(organizationId: number, benefitType?: string): Promise<ServiceResponse<any[]>> {
-    try {
-      const whereConditions = [eq(staff.organizationId, organizationId)];
-      
-      if (benefitType) {
-        whereConditions.push(eq(staffBenefits.benefitType, benefitType));
-      }
-
-      const result = await db.select({
-        staffId: staff.id,
-        staffName: sql<string>`CONCAT(${staff.firstName}, ' ', ${staff.lastName})`,
-        employeeNumber: staff.employeeNumber,
-        branchName: branches.name,
-        benefitType: staffBenefits.benefitType,
-        benefitName: staffBenefits.benefitName,
-        amountValue: staffBenefits.amountValue,
-        percentageValue: staffBenefits.percentageValue,
-        isActive: staffBenefits.isActive,
-        effectiveFrom: staffBenefits.effectiveFrom,
-        effectiveTo: staffBenefits.effectiveTo
-      })
-        .from(staff)
-        .leftJoin(branches, eq(staff.branchId, branches.id))
-        .leftJoin(staffBenefits, eq(staff.id, staffBenefits.staffId))
-        .where(and(...whereConditions))
-        .orderBy(staff.firstName, staffBenefits.effectiveFrom);
-
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch organization staff benefits' };
-    }
-  }
 }

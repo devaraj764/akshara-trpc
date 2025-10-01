@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, adminProcedure, protectedProcedure } from '../trpc.js';
+import { router, adminProcedure, branchAdminProcedure, protectedProcedure } from '../trpc.js';
 import { TRPCError } from '@trpc/server';
 import { AcademicYearService } from '../services/academicYearService.js';
 
@@ -39,8 +39,8 @@ const updateAcademicYearSchema = z.object({
 );
 
 export const academicYearRouter = router({
-  // Get all academic years - accessible by admins
-  getAll: adminProcedure
+  // Get all academic years - accessible by admins and branch admins
+  getAll: branchAdminProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),
@@ -66,8 +66,8 @@ export const academicYearRouter = router({
       return result.data;
     }),
 
-  // Get academic year by ID
-  getById: protectedProcedure
+  // Get academic year by ID - accessible by admins and branch admins
+  getById: branchAdminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
@@ -92,8 +92,8 @@ export const academicYearRouter = router({
       return result.data;
     }),
 
-  // Get current academic year
-  getCurrent: protectedProcedure
+  // Get current academic year - accessible by admins and branch admins
+  getCurrent: branchAdminProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),

@@ -1,6 +1,6 @@
 import { eq, and, sql, isNull, inArray } from 'drizzle-orm';
 import db from '../db/index.js';
-import { grades, sections, branches, organizations } from '../db/schema.js';
+import { grades, sections, branches, organizations, staff } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
 export interface CreateClassData {
@@ -28,11 +28,13 @@ export interface CreateSectionData {
   name: string;
   capacity?: number | undefined;
   branchId: number;
+  classTeacherId?: number | undefined;
 }
 
 export interface UpdateSectionData {
   name?: string | undefined;
   capacity?: number | undefined;
+  classTeacherId?: number | undefined;
 }
 
 export interface GetAllOptions {
@@ -381,21 +383,56 @@ export class ClassService {
     }
   }
 
-  static async getSectionsByClass(gradeId: number, branchId: number): Promise<ServiceResponse<any[]>> {
+  static async getSectionsByClass(gradeId: number, branchId: number, includeDeleted: boolean = false): Promise<ServiceResponse<any[]>> {
     try {
+      // Build the where condition based on includeDeleted parameter
+      let whereCondition = and(
+        eq(sections.gradeId, gradeId),
+        eq(sections.branchId, branchId)
+      );
+
+      // Only filter out deleted sections if includeDeleted is false
+      if (!includeDeleted) {
+        whereCondition = and(whereCondition, eq(sections.isDeleted, false));
+      }
+
       const result = await db.select({
         id: sections.id,
         name: sections.name,
         capacity: sections.capacity,
         gradeId: sections.gradeId,
         branchId: sections.branchId,
-      }).from(sections).where(and(
-        eq(sections.gradeId, gradeId),
-        eq(sections.branchId, branchId),
-        eq(sections.isDeleted, false)
-      ));
+        organizationId: sections.organizationId,
+        isDeleted: sections.isDeleted,
+        createdAt: sections.createdAt,
+        classTeacherId: sections.classTeacherId,
+        teacher: {
+          id: staff.id,
+          name: sql<string>`CONCAT(${staff.firstName}, ' ', COALESCE(${staff.lastName}, ''))`.as('fullName')
+        },
+        // Add student count if needed
+        _count: {
+          students: sql<number>`(
+            SELECT COUNT(*) FROM enrollments 
+            WHERE enrollments.section_id = ${sections.id} 
+            AND enrollments.is_deleted = false
+          )`.as('studentCount')
+        }
+      })
+      .from(sections)
+      .leftJoin(staff, eq(sections.classTeacherId, staff.id))
+      .where(whereCondition)
+      .orderBy(sections.name);
 
-      return { success: true, data: result };
+      // Map the result to include proper structure
+      const mappedResult = result.map(section => ({
+        ...section,
+        _count: {
+          students: section._count?.students || 0
+        }
+      }));
+
+      return { success: true, data: mappedResult };
     } catch (error: any) {
       console.error('Error fetching sections:', error);
       return { success: false, error: error.message || 'Failed to fetch sections' };
@@ -416,11 +453,23 @@ export class ClassService {
         return { success: false, error: 'Section name already exists in this class and branch' };
       }
 
+      // Get organization ID from the branch
+      const branchResult = await db.select({ organizationId: branches.organizationId })
+        .from(branches)
+        .where(eq(branches.id, data.branchId))
+        .limit(1);
+      
+      if (branchResult.length === 0) {
+        return { success: false, error: 'Branch not found' };
+      }
+
       const newSection = await db.insert(sections).values({
         gradeId: data.gradeId,
         name: data.name,
         capacity: data.capacity || null,
         branchId: data.branchId,
+        organizationId: branchResult[0]!.organizationId,
+        classTeacherId: data.classTeacherId || null,
       }).returning();
 
       if (newSection.length === 0) {
@@ -453,6 +502,7 @@ export class ClassService {
       const updateData: any = {};
       if (data.name !== undefined) updateData.name = data.name;
       if (data.capacity !== undefined) updateData.capacity = data.capacity;
+      if (data.classTeacherId !== undefined) updateData.classTeacherId = data.classTeacherId;
 
       const updatedSection = await db.update(sections)
         .set(updateData)
@@ -673,6 +723,223 @@ export class ClassService {
     } catch (error: any) {
       console.error('Error fetching private grades:', error);
       return { success: false, error: error.message || 'Failed to fetch private grades' };
+    }
+  }
+
+  // Get enabled grades for an organization
+  static async getEnabledGrades(organizationId: number): Promise<ServiceResponse<any[]>> {
+    try {
+      // Get enabled grade IDs from organization
+      const orgResult = await db.select({ enabledGrades: organizations.enabledGrades })
+        .from(organizations)
+        .where(eq(organizations.id, organizationId))
+        .limit(1);
+
+      if (orgResult.length === 0) {
+        return { success: false, error: 'Organization not found' };
+      }
+
+      const enabledIds = orgResult[0]?.enabledGrades || [];
+      
+      // If no grades are specifically enabled, return all organization grades
+      if (enabledIds.length === 0) {
+        return await this.getAll({ organizationId });
+      }
+
+      // Fetch the enabled grades
+      const result = await db.select({
+        id: grades.id,
+        name: grades.name,
+        displayName: grades.displayName,
+        gradeLevel: grades.order,
+        level: sql<string>`
+          CASE 
+            WHEN ${grades.order} <= 5 THEN 'Primary'
+            WHEN ${grades.order} <= 8 THEN 'Middle School'
+            WHEN ${grades.order} <= 10 THEN 'High School'
+            ELSE 'Senior Secondary'
+          END
+        `.as('level'),
+        branchId: grades.branchId,
+        organizationId: grades.organizationId,
+        isPrivate: grades.isPrivate,
+        createdAt: grades.createdAt
+      })
+        .from(grades)
+        .where(
+          and(
+            inArray(grades.id, enabledIds),
+            eq(grades.isDeleted, false)
+          )
+        )
+        .orderBy(grades.order);
+
+      return { success: true, data: result };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to fetch enabled grades' };
+    }
+  }
+
+  // Check removal info - determines if class should be deleted or just removed from enabled list
+  static async checkRemoval(classId: number, organizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      // Get class/grade details
+      const classResult = await db.select({
+        id: grades.id,
+        name: grades.name,
+        isPrivate: grades.isPrivate,
+        organizationId: grades.organizationId,
+      })
+      .from(grades)
+      .where(and(eq(grades.id, classId), eq(grades.isDeleted, false)))
+      .limit(1);
+
+      if (classResult.length === 0) {
+        return {
+          success: false,
+          error: 'Class not found'
+        };
+      }
+
+      const classData = classResult[0];
+
+      // Check if class has sections
+      const sectionCount = await db.select({ count: sql<number>`COUNT(*)` })
+        .from(sections)
+        .where(and(eq(sections.gradeId, classId), eq(sections.isDeleted, false)));
+
+      const hasSections = sectionCount[0]?.count > 0;
+
+      // Determine removal type
+      let removalType: 'remove' | 'delete';
+      let canRemove = true;
+      let reason = '';
+
+      if (classData.isPrivate && classData.organizationId === organizationId) {
+        // Private class owned by user's organization - delete entirely
+        removalType = 'delete';
+        if (hasSections) {
+          canRemove = false;
+          reason = `Cannot delete class as it has ${sectionCount[0]?.count} sections`;
+        }
+      } else {
+        // Global class - just remove from enabled list
+        removalType = 'remove';
+        // Can always remove from enabled list
+      }
+
+      return {
+        success: true,
+        data: {
+          classId,
+          className: classData.name,
+          removalType,
+          canRemove,
+          reason,
+          hasSections,
+          sectionCount: sectionCount[0]?.count || 0,
+          isPrivate: classData.isPrivate,
+          ownedByOrganization: classData.organizationId === organizationId
+        }
+      };
+    } catch (error: any) {
+      console.error('Error checking class removal:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to check removal info'
+      };
+    }
+  }
+
+  // Remove or delete class based on ownership and usage
+  static async removeOrDelete(classId: number, organizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      // First check removal info
+      const checkResult = await this.checkRemoval(classId, organizationId);
+      
+      if (!checkResult.success) {
+        return checkResult;
+      }
+
+      const { removalType, canRemove, reason } = checkResult.data;
+
+      if (!canRemove) {
+        return {
+          success: false,
+          error: reason
+        };
+      }
+
+      if (removalType === 'delete') {
+        // Delete the private class entirely
+        const result = await db.update(grades)
+          .set({ 
+            isDeleted: true,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(and(eq(grades.id, classId), eq(grades.isDeleted, false)))
+          .returning();
+
+        if (result.length === 0) {
+          return {
+            success: false,
+            error: 'Class not found'
+          };
+        }
+
+        return {
+          success: true,
+          data: {
+            action: 'deleted',
+            class: result[0]
+          }
+        };
+      } else {
+        // Remove from organization's enabled grades list
+        if (!organizationId) {
+          return {
+            success: false,
+            error: 'Organization ID is required'
+          };
+        }
+
+        const result = await db.transaction(async (tx) => {
+          // Get current enabled grades
+          const orgResult = await tx.select({ enabledGrades: organizations.enabledGrades })
+            .from(organizations)
+            .where(eq(organizations.id, organizationId))
+            .limit(1);
+
+          if (!orgResult || !orgResult[0]) {
+            throw new Error('Organization not found');
+          }
+
+          const currentEnabled = orgResult[0].enabledGrades || [];
+          const newEnabled = currentEnabled.filter(id => id !== classId);
+          
+          // Update organization's enabled grades
+          await tx.update(organizations)
+            .set({ enabledGrades: newEnabled })
+            .where(eq(organizations.id, organizationId));
+
+          return { classId, organizationId };
+        });
+
+        return {
+          success: true,
+          data: {
+            action: 'removed',
+            classId: result.classId,
+            organizationId: result.organizationId
+          }
+        };
+      }
+    } catch (error: any) {
+      console.error('Error removing/deleting class:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to remove or delete class'
+      };
     }
   }
 }
