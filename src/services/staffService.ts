@@ -7,7 +7,9 @@ import {
   branches, 
   departments,
   users, 
-  userRoles
+  userRoles,
+  addresses,
+  personDetails
 } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
@@ -19,11 +21,18 @@ export interface CreateStaffData {
   lastName?: string | undefined;
   phone: string; // Required for staff creation
   email: string; // Required for staff creation
-  address?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   dob?: string | undefined;
   gender?: string | undefined;
   position?: string | undefined;
-  emergencyContact?: any;
   hireDate?: string | undefined;
   departmentId?: number | undefined;
   employeeType?: string | undefined;
@@ -36,11 +45,18 @@ export interface UpdateStaffData {
   lastName?: string | undefined;
   phone?: string | undefined;
   email?: string | undefined;
-  address?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   dob?: string | undefined;
   gender?: string | undefined;
   position?: string | undefined;
-  emergencyContact?: any;
   hireDate?: string | undefined;
   departmentId?: number | undefined;
   employeeType?: string | undefined;
@@ -233,64 +249,87 @@ export class StaffService {
         };
       }
 
-      // Generate employee number automatically if not provided
-      let employeeNumber = data.employeeNumber;
-      if (!employeeNumber) {
-        try {
-          // Get count of existing staff in the organization for auto-generation
-          const staffCount = await db.select({ count: sql<number>`count(*)` })
-            .from(staff)
-            .where(
-              eq(staff.organizationId, data.organizationId)
-            );
-
-          const nextNumber = (staffCount[0]?.count || 0) + 1;
-          const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
-          employeeNumber = `${employeeTypePrefix}${nextNumber.toString().padStart(4, '0')}`;
-
-          console.log(`Generated employee number: ${employeeNumber} for ${data.employeeType}`);
-        } catch (error) {
-          console.error('Error generating employee number:', error);
-          // Fallback to timestamp-based ID if count fails
-          const timestamp = Date.now().toString().slice(-6);
-          const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
-          employeeNumber = `${employeeTypePrefix}${timestamp}`;
+      return await db.transaction(async (tx) => {
+        // Create address if provided
+        let addressId: number | undefined;
+        if (data.address) {
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: data.address.addressLine1,
+            addressLine2: data.address.addressLine2 || null,
+            pincode: data.address.pincode || null,
+            cityVillage: data.address.cityVillage,
+            district: data.address.district,
+            state: data.address.state,
+            country: data.address.country || 'India',
+          }).returning({ id: addresses.id });
+          addressId = addressResult[0]?.id;
         }
-      }
 
-      // Create the staff record without user account
-      const staffResult = await db.insert(staff).values({
-        userId: null, // No user account initially
-        organizationId: data.organizationId,
-        branchId: data.branchId,
-        employeeNumber: employeeNumber,
-        firstName: data.firstName,
-        lastName: data.lastName || null,
-        phone: data.phone, // Required field
-        email: data.email, // Required field
-        address: data.address || null,
-        dob: data.dob || null,
-        gender: data.gender || null,
-        position: data.position || null,
-        emergencyContact: data.emergencyContact || null,
-        hireDate: data.hireDate || null,
-        departmentId: data.departmentId || null,
-        employeeType: data.employeeType || 'STAFF',
-        meta: data.meta || null
-      }).returning();
+        // Create person details
+        const personDetailsResult = await tx.insert(personDetails).values({
+          firstName: data.firstName,
+          lastName: data.lastName || null,
+          dob: data.dob || null,
+          gender: data.gender || null,
+          addressId: addressId || null,
+        }).returning({ id: personDetails.id });
 
-      const createdStaff = staffResult[0];
-      if (!createdStaff) {
+        const personDetailsId = personDetailsResult[0]?.id;
+        if (!personDetailsId) {
+          throw new Error('Failed to create person details');
+        }
+
+        // Generate employee number automatically if not provided
+        let employeeNumber = data.employeeNumber;
+        if (!employeeNumber) {
+          try {
+            // Get count of existing staff in the organization for auto-generation
+            const staffCount = await tx.select({ count: sql<number>`count(*)` })
+              .from(staff)
+              .where(
+                eq(staff.organizationId, data.organizationId)
+              );
+
+            const nextNumber = (staffCount[0]?.count || 0) + 1;
+            const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
+            employeeNumber = `${employeeTypePrefix}${nextNumber.toString().padStart(4, '0')}`;
+
+            console.log(`Generated employee number: ${employeeNumber} for ${data.employeeType}`);
+          } catch (error) {
+            console.error('Error generating employee number:', error);
+            // Fallback to timestamp-based ID if count fails
+            const timestamp = Date.now().toString().slice(-6);
+            const employeeTypePrefix = data.employeeType === 'TEACHER' ? 'TCH' : 'STF';
+            employeeNumber = `${employeeTypePrefix}${timestamp}`;
+          }
+        }
+
+        // Create the staff record without user account
+        const staffResult = await tx.insert(staff).values({
+          userId: null, // No user account initially
+          organizationId: data.organizationId,
+          branchId: data.branchId,
+          employeeNumber: employeeNumber,
+          phone: data.phone, // Required field
+          email: data.email, // Required field
+          position: data.position || null,
+          hireDate: data.hireDate || null,
+          departmentId: data.departmentId || null,
+          employeeType: data.employeeType || 'STAFF',
+          meta: data.meta || null,
+          personDetailsId: personDetailsId,
+        }).returning();
+
+        const createdStaff = staffResult[0];
+        if (!createdStaff) {
+          throw new Error('Failed to create staff record');
+        }
+
         return {
-          success: false,
-          error: 'Failed to create staff record'
+          success: true,
+          data: createdStaff
         };
-      }
-
-      return {
-        success: true,
-        data: createdStaff
-      };
+      });
     } catch (error: any) {
       console.log(error);
       if (error.constraint?.includes('uq_staff_employee_number')) {

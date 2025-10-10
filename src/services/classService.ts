@@ -638,6 +638,66 @@ export class ClassService {
       ))
       .orderBy(grades.order);
 
+      // Get all sections for these grades, organized by branches
+      if (result.length > 0) {
+        const gradeIds = result.map(r => r.id);
+        
+        const sectionsData = await db.select({
+          id: sections.id,
+          name: sections.name,
+          capacity: sections.capacity,
+          gradeId: sections.gradeId,
+          branchId: sections.branchId,
+          organizationId: sections.organizationId,
+          classTeacherId: sections.classTeacherId,
+          branchName: branches.name,
+          branchCode: branches.code,
+          // Add student count
+          _count: {
+            students: sql<number>`(
+              SELECT COUNT(*) FROM enrollments 
+              WHERE enrollments.section_id = ${sections.id} 
+              AND enrollments.is_deleted = false
+            )`.as('studentCount')
+          }
+        })
+        .from(sections)
+        .leftJoin(branches, eq(sections.branchId, branches.id))
+        .where(and(
+          sql`${sections.gradeId} IN (${sql.join(gradeIds.map(id => sql`${id}`), sql`, `)})`,
+          eq(sections.isDeleted, false),
+          eq(sections.organizationId, organizationId)
+        ));
+
+        // Attach sections to grades
+        const enrichedResult = result.map(grade => ({
+          ...grade,
+          sections: sectionsData.filter(section => section.gradeId === grade.id).map(section => ({
+            id: section.id,
+            name: section.name,
+            capacity: section.capacity,
+            branchId: section.branchId,
+            organizationId: section.organizationId,
+            classTeacherId: section.classTeacherId,
+            branch: {
+              name: section.branchName,
+              code: section.branchCode
+            },
+            _count: {
+              students: section._count?.students || 0
+            }
+          })),
+          _count: {
+            sections: sectionsData.filter(section => section.gradeId === grade.id).length
+          }
+        }));
+
+        return {
+          success: true,
+          data: enrichedResult
+        };
+      }
+
       return {
         success: true,
         data: result

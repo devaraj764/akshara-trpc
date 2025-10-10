@@ -26,10 +26,16 @@ export const statisticsRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       // Check if user has access to this branch
-      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN' && ctx.user.branchId !== input.branchId) {
+      const hasAccess = 
+        ctx.user.role === 'SUPER_ADMIN' || 
+        ctx.user.role === 'ADMIN' || 
+        (ctx.user.branchId === input.branchId && 
+         (ctx.user.role === 'BRANCH_ADMIN' || ctx.user.role === 'TEACHER' || ctx.user.role === 'STAFF' || ctx.user.role === 'ACCOUNTANT'));
+      
+      if (!hasAccess) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'Access denied to branch statistics',
+          message: `Access denied to branch statistics. User role: ${ctx.user.role}, User branch: ${ctx.user.branchId}, Requested branch: ${input.branchId}`,
         });
       }
 
@@ -69,10 +75,16 @@ export const statisticsRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       // Check if user has access to this branch
-      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN' && ctx.user.branchId !== input.branchId) {
+      const hasAccess = 
+        ctx.user.role === 'SUPER_ADMIN' || 
+        ctx.user.role === 'ADMIN' || 
+        (ctx.user.branchId === input.branchId && 
+         (ctx.user.role === 'BRANCH_ADMIN' || ctx.user.role === 'TEACHER' || ctx.user.role === 'STAFF' || ctx.user.role === 'ACCOUNTANT'));
+      
+      if (!hasAccess) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'Access denied to branch statistics',
+          message: `Access denied to branch statistics. User role: ${ctx.user.role}, User branch: ${ctx.user.branchId}, Requested branch: ${input.branchId}`,
         });
       }
 
@@ -92,16 +104,17 @@ export const statisticsRouter = router({
   getUserStats: protectedProcedure
     .query(async ({ ctx }) => {
       // Return stats based on user's role and access level
-      if (ctx.user.role === 'SUPER_ADMIN' || ctx.user.role === 'ADMIN') {
-        if (ctx.user.organizationId) {
-          const result = await StatisticsService.generateOrganizationStats(ctx.user.organizationId);
-          if (result.success) {
-            return { type: 'organization', data: result.data };
-          }
+      
+      // Organization-level admins get organization stats
+      if ((ctx.user.role === 'SUPER_ADMIN' || ctx.user.role === 'ADMIN') && ctx.user.organizationId) {
+        const result = await StatisticsService.generateOrganizationStats(ctx.user.organizationId);
+        if (result.success) {
+          return { type: 'organization', data: result.data };
         }
       }
       
-      if (ctx.user.branchId) {
+      // Branch admins and other branch-level users get branch stats
+      if (ctx.user.branchId && (ctx.user.role === 'BRANCH_ADMIN' || ctx.user.role === 'TEACHER' || ctx.user.role === 'STAFF' || ctx.user.role === 'ACCOUNTANT')) {
         const result = await StatisticsService.generateBranchStats(ctx.user.branchId);
         if (result.success) {
           return { type: 'branch', data: result.data };
@@ -110,24 +123,25 @@ export const statisticsRouter = router({
       
       throw new TRPCError({
         code: 'NOT_FOUND',
-        message: 'No statistics available for user',
+        message: `No statistics available for user role: ${ctx.user.role}. Organization ID: ${ctx.user.organizationId}, Branch ID: ${ctx.user.branchId}`,
       });
     }),
 
   getUserStatsMarkdown: protectedProcedure
     .query(async ({ ctx }) => {
       // Return markdown stats based on user's role and access level
-      if (ctx.user.role === 'SUPER_ADMIN' || ctx.user.role === 'ADMIN') {
-        if (ctx.user.organizationId) {
-          const result = await StatisticsService.generateOrganizationStats(ctx.user.organizationId);
-          if (result.success) {
-            const markdown = StatisticsService.generateMarkdownReport(result.data!, 'organization');
-            return { type: 'organization', markdown };
-          }
+      
+      // Organization-level admins get organization stats
+      if ((ctx.user.role === 'SUPER_ADMIN' || ctx.user.role === 'ADMIN') && ctx.user.organizationId) {
+        const result = await StatisticsService.generateOrganizationStats(ctx.user.organizationId);
+        if (result.success) {
+          const markdown = StatisticsService.generateMarkdownReport(result.data!, 'organization');
+          return { type: 'organization', markdown };
         }
       }
       
-      if (ctx.user.branchId) {
+      // Branch admins and other branch-level users get branch stats
+      if (ctx.user.branchId && (ctx.user.role === 'BRANCH_ADMIN' || ctx.user.role === 'TEACHER' || ctx.user.role === 'STAFF' || ctx.user.role === 'ACCOUNTANT')) {
         const result = await StatisticsService.generateBranchStats(ctx.user.branchId);
         if (result.success) {
           const markdown = StatisticsService.generateMarkdownReport(result.data!, 'branch');
@@ -137,7 +151,7 @@ export const statisticsRouter = router({
       
       throw new TRPCError({
         code: 'NOT_FOUND',
-        message: 'No statistics available for user',
+        message: `No statistics available for user role: ${ctx.user.role}. Organization ID: ${ctx.user.organizationId}, Branch ID: ${ctx.user.branchId}`,
       });
     }),
 });

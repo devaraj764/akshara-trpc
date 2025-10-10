@@ -1,3 +1,7 @@
+// Load environment variables first, before any other imports
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import { createHTTPServer } from '@trpc/server/adapters/standalone';
 import { createContext, router } from './trpc.js';
 import { authRouter } from './routes/auth.js';
@@ -15,17 +19,17 @@ import { academicYearRouter } from './routes/academicYear.js';
 import { departmentRouter } from './routes/department.js';
 import { staffRouter } from './routes/staff.js';
 import { statisticsRouter } from './routes/statistics.js';
+import { branchStatisticsRouter } from './routes/branchStatistics.js';
+import { organizationStatisticsRouter } from './routes/organizationStatistics.js';
 import { calendarRouter } from './routes/calendar.js';
 import { noticeBoardRouter } from './routes/noticeBoard.js';
+import { periodsRouter } from './routes/periods.js';
+import { subjectAssignmentsRouter } from './routes/subjectAssignments.js';
 // Removed deprecated feeStructure routes
 import { feeTypesRouter } from './routes/feeTypes.js';
 import { feeItemsRouter } from './routes/feeItems.js';
 import { parentRouter } from './routes/parent.js';
-import * as dotenv from 'dotenv';
 import morgan from 'morgan';
-
-// Load environment variables
-dotenv.config();
 
 // Custom Morgan format for detailed logging
 morgan.token('user-id', (req) => {
@@ -75,8 +79,12 @@ const appRouter = router({
   departments: departmentRouter,
   staff: staffRouter,
   statistics: statisticsRouter,
+  branchStatistics: branchStatisticsRouter,
+  organizationStatistics: organizationStatisticsRouter,
   calendar: calendarRouter,
   noticeBoard: noticeBoardRouter,
+  periods: periodsRouter,
+  subjectAssignments: subjectAssignmentsRouter,
   // Removed deprecated feeStructure router
   feeTypes: feeTypesRouter,
   feeItems: feeItemsRouter,

@@ -1,7 +1,7 @@
 import { and, eq, or, like, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import db from '../db/index.js'
-import { userRoles, users, organizations, branches } from '../db/schema.js'
+import { userRoles, users, organizations, branches, addresses } from '../db/schema.js'
 import type { ServiceResponse } from '../types.db.js'
 
 export type CreateUserData = {
@@ -81,19 +81,17 @@ class UserService {
         organizationId: organizations.id,
         organizationName: organizations.name,
         organizationRegistrationNumber: organizations.registrationNumber,
-        organizationAddress: organizations.address,
         organizationContactEmail: organizations.contactEmail,
         organizationContactPhone: organizations.contactPhone,
-        organizationSettings: organizations.settings,
+        organizationMeta: organizations.meta,
 
         // Branch fields
         branchId: branches.id,
         branchName: branches.name,
         branchCode: branches.code,
-        branchAddress: branches.address,
         branchContactPhone: branches.contactPhone,
         branchTimezone: branches.timezone,
-        branchSettings: branches.settings,
+        branchMeta: branches.meta,
 
         // Role fields
         roleId: userRoles.id,
@@ -115,10 +113,9 @@ class UserService {
       // Extract user data from first row (all rows have same user data)
       const firstRow = results[0]!;
 
-      // Collect all roles for this user, excluding STAFF and STUDENT roles
+      // Collect all roles for this user
       const roles = results
         .filter(row => row.roleId !== null)
-        .filter(row => !['STAFF', 'STUDENT'].includes(row.role!))
         .map(row => ({
           id: row.roleId!,
           role: row.role!,
@@ -148,10 +145,9 @@ class UserService {
           id: firstRow.organizationId,
           name: firstRow.organizationName,
           registrationNumber: firstRow.organizationRegistrationNumber,
-          address: firstRow.organizationAddress,
           contactEmail: firstRow.organizationContactEmail,
           contactPhone: firstRow.organizationContactPhone,
-          settings: firstRow.organizationSettings
+          meta: firstRow.organizationMeta
         } : null,
 
         // Branch details (null if user doesn't belong to a branch)
@@ -159,10 +155,9 @@ class UserService {
           id: firstRow.branchId,
           name: firstRow.branchName,
           code: firstRow.branchCode,
-          address: firstRow.branchAddress,
           contactPhone: firstRow.branchContactPhone,
           timezone: firstRow.branchTimezone,
-          settings: firstRow.branchSettings
+          meta: firstRow.branchMeta
         } : null
       };
 

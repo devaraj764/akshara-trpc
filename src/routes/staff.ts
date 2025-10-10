@@ -3,6 +3,18 @@ import { router, branchAdminProcedure, adminProcedure } from '../trpc.js';
 import { TRPCError } from '@trpc/server';
 import { StaffService } from '../services/staffService.js';
 import { StaffSalaryService } from '../services/staffSalaryService.js';
+import { MonthlyPayslipService } from '../services/monthlyPayslipService.js';
+
+// Address schema for validation  
+const addressSchema = z.object({
+  addressLine1: z.string().min(1, 'Address line 1 is required').max(255),
+  addressLine2: z.string().max(255).optional(),
+  pincode: z.string().max(10).optional(),
+  cityVillage: z.string().min(1, 'City/Village is required').max(128),
+  district: z.string().min(1, 'District is required').max(128),
+  state: z.string().min(1, 'State is required').max(128),
+  country: z.string().max(128).optional(),
+});
 
 // Validation schemas
 const createStaffSchema = z.object({
@@ -14,11 +26,10 @@ const createStaffSchema = z.object({
   lastName: z.string().max(255).optional(),
   phone: z.string().min(1, 'Phone number is required').max(32),
   email: z.string().email('Valid email is required').min(1, 'Email is required').max(255),
-  address: z.string().optional(),
+  address: addressSchema.optional(),
   dob: z.string().optional(),
   gender: z.string().max(32).optional(),
   position: z.string().max(255).optional(),
-  emergencyContact: z.any().optional(),
   hireDate: z.string().optional(),
   departmentId: z.number().positive().optional(),
   employeeType: z.enum(['STAFF', 'TEACHER']).default('STAFF'),
@@ -37,11 +48,10 @@ const updateStaffSchema = z.object({
   lastName: z.string().max(255).optional(),
   phone: z.string().max(32).optional(),
   email: z.string().email().max(255).optional(),
-  address: z.string().optional(),
+  address: addressSchema.optional(),
   dob: z.string().optional(),
   gender: z.string().max(32).optional(),
   position: z.string().max(255).optional(),
-  emergencyContact: z.any().optional(),
   hireDate: z.string().optional(),
   departmentId: z.number().positive().optional(),
   employeeType: z.enum(['STAFF', 'TEACHER']).optional(),
@@ -394,8 +404,8 @@ export const staffRouter = router({
       return result.data;
     }),
 
-  // Create staff salary
-  createSalary: branchAdminProcedure
+  // Create staff salary (ADMIN only)
+  createSalary: adminProcedure
     .input(z.object({
       staffId: z.number().positive(),
       basicSalary: z.number().positive('Basic salary must be positive'),
@@ -418,31 +428,20 @@ export const staffRouter = router({
       isCurrent: z.boolean().default(true),
     }))
     .mutation(async ({ input, ctx }) => {
-      // For branch admins, ensure they create salary in their own organization and branch
-      if (ctx.user.role !== 'ADMIN') {
-        if (!ctx.user.organizationId) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Organization information required',
-          });
-        }
-        if (!ctx.user.branchId) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Branch information required',
-          });
-        }
+      // Only ADMIN and SUPER_ADMIN can create salaries
+      const organizationId = ctx.user.organizationId!;
+      
+      if (!organizationId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Organization information required',
+        });
       }
 
-      const organizationId = ctx.user.organizationId!;
-      const branchId = ctx.user.role === 'ADMIN' ?
-        (input as any).branchId || ctx.user.branchId :
-        ctx.user.branchId!;
-
       const result = await StaffSalaryService.create({
-        organizationId,
-        branchId,
         staffId: input.staffId,
+        organizationId,
+        branchId: 0, // Will be set from staff record
         basicSalary: input.basicSalary,
         allowances: input.allowances,
         deductions: input.deductions,
@@ -450,7 +449,6 @@ export const staffRouter = router({
         effectiveTo: input.effectiveTo,
         isCurrent: input.isCurrent,
         createdBy: ctx.user.id,
-
       });
 
       if (!result.success) {
@@ -463,8 +461,8 @@ export const staffRouter = router({
       return result.data;
     }),
 
-  // Update staff salary
-  updateSalary: branchAdminProcedure
+  // Update staff salary (ADMIN only)
+  updateSalary: adminProcedure
     .input(z.object({
       id: z.number().positive(),
       basicSalary: z.number().positive().optional(),
@@ -487,12 +485,10 @@ export const staffRouter = router({
       isCurrent: z.boolean().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      // Pass user's branch ID for branch admin restrictions
-      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
-
+      // Admin has full access to update salaries
       const { id, ...updateData } = input;
 
-      const result = await StaffSalaryService.update(id, updateData, userBranchId);
+      const result = await StaffSalaryService.update(id, updateData, undefined);
 
       if (!result.success) {
         throw new TRPCError({
@@ -504,16 +500,14 @@ export const staffRouter = router({
       return result.data;
     }),
 
-  // Delete staff salary
-  deleteSalary: branchAdminProcedure
+  // Delete staff salary (ADMIN only)
+  deleteSalary: adminProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
     .mutation(async ({ input, ctx }) => {
-      // Pass user's branch ID for branch admin restrictions
-      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
-
-      const result = await StaffSalaryService.delete(input.id, userBranchId);
+      // Admin has full access to delete salaries
+      const result = await StaffSalaryService.delete(input.id, undefined);
 
       if (!result.success) {
         throw new TRPCError({
@@ -594,6 +588,176 @@ export const staffRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to check existing staff',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Monthly Payslips Management Procedures
+  // Get all monthly payslips
+  getAllPayslips: branchAdminProcedure
+    .input(z.object({
+      branchId: z.number().positive().optional(),
+      employeeId: z.number().positive().optional(),
+      employeeType: z.enum(['STAFF', 'TEACHER']).optional(),
+      month: z.number().min(1).max(12).optional(),
+      year: z.number().min(2020).max(2030).optional(),
+      status: z.number().min(0).max(3).optional(), // 0=unpaid, 1=paid, 2=processing, 3=overdue
+      includeStaffInfo: z.boolean().default(true),
+    }))
+    .query(async ({ input, ctx }) => {
+      // For branch admins, restrict to their branch only
+      const branchId = ctx.user.role === 'ADMIN' ? input.branchId : ctx.user.branchId;
+
+      const result = await MonthlyPayslipService.getAll({
+        ...input,
+        branchId: branchId || undefined,
+        organizationId: ctx.user.organizationId || undefined
+      });
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to fetch monthly payslips',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Get payslip by ID
+  getPayslipById: branchAdminProcedure
+    .input(z.object({
+      id: z.number().positive(),
+    }))
+    .query(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      const result = await MonthlyPayslipService.getById(input.id, userBranchId);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: result.error || 'Monthly payslip not found',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Generate monthly payslips for organization
+  generateMonthlyPayslips: branchAdminProcedure
+    .input(z.object({
+      month: z.number().min(1).max(12),
+      year: z.number().min(2020).max(2030),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Get organization information from user - payslips generation is organization-level
+      const organizationId = ctx.user.organizationId;
+      
+      if (!organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization information required',
+        });
+      }
+
+      const result = await MonthlyPayslipService.generateMonthlyPayslips(
+        organizationId,
+        input.month,
+        input.year,
+        ctx.user.id
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to generate monthly payslips',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Update payslip status
+  updatePayslipStatus: branchAdminProcedure
+    .input(z.object({
+      id: z.number().positive(),
+      status: z.number().min(0).max(3), // 0=unpaid, 1=paid, 2=processing, 3=overdue
+      paymentDate: z.string().optional(),
+      paymentMethod: z.string().optional(),
+      paymentReference: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      const { id, ...updateData } = input;
+
+      // If marking as paid, set payment date to now if not provided
+      if (input.status === 1 && !input.paymentDate) {
+        updateData.paymentDate = new Date().toISOString();
+      }
+
+      const result = await MonthlyPayslipService.update(id, {
+        ...updateData,
+        paidBy: input.status === 1 ? ctx.user.id : undefined
+      }, userBranchId);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to update payslip status',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Bulk update payslip status
+  updateBulkPayslipStatus: branchAdminProcedure
+    .input(z.object({
+      ids: z.array(z.number().positive()).min(1, 'At least one payslip ID is required'),
+      status: z.number().min(0).max(3), // 0=unpaid, 1=paid, 2=processing, 3=overdue
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      const result = await MonthlyPayslipService.updateBulkStatus(
+        input.ids,
+        input.status,
+        userBranchId
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to update payslip status',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Delete payslip
+  deletePayslip: branchAdminProcedure
+    .input(z.object({
+      id: z.number().positive(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      const result = await MonthlyPayslipService.delete(input.id, userBranchId);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to delete payslip',
         });
       }
 

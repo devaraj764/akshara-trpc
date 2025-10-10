@@ -1,6 +1,6 @@
 import { eq, and, or, like, count, ne } from 'drizzle-orm';
 import db from '../db/index.js';
-import { branches, students, staff, sections, users } from '../db/schema.js';
+import { branches, students, staff, sections, users, addresses } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
 export interface Branch {
@@ -19,7 +19,15 @@ export interface Branch {
 export interface CreateBranchData {
   name: string;
   code?: string | undefined;
-  address?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   contactPhone?: string | undefined;
   organizationId: number;
   timezone?: string | undefined;
@@ -29,7 +37,15 @@ export interface CreateBranchData {
 export interface UpdateBranchData {
   name?: string | undefined;
   code?: string | undefined;
-  address?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   contactPhone?: string | undefined;
   timezone?: string | undefined;
   settings?: any;
@@ -103,39 +119,54 @@ export class BranchesService {
         return { success: false, error: 'Name and organization ID are required' };
       }
 
-      console.log(data)
-
-      // Check if branch code is unique within organization (if provided)
-      if (data.code) {
-        const existingBranch = await db.select().from(branches)
-          .where(and(
-            eq(branches.organizationId, data.organizationId),
-            eq(branches.code, data.code)
-          ))
-          .limit(1);
-        
-        if (existingBranch.length > 0) {
-          return { success: false, error: 'Branch code already exists in this organization' };
+      return await db.transaction(async (tx) => {
+        // Check if branch code is unique within organization (if provided)
+        if (data.code) {
+          const existingBranch = await tx.select().from(branches)
+            .where(and(
+              eq(branches.organizationId, data.organizationId),
+              eq(branches.code, data.code)
+            ))
+            .limit(1);
+          
+          if (existingBranch.length > 0) {
+            throw new Error('Branch code already exists in this organization');
+          }
         }
-      }
 
-      const newBranch = await db.insert(branches).values({
-        name: data.name,
-        code: data.code || null,
-        address: data.address || null,
-        contactPhone: data.contactPhone || null,
-        organizationId: data.organizationId,
-        timezone: data.timezone || 'Asia/Kolkata',
-        settings: data.settings || null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }).returning();
+        // Create address if provided
+        let addressId: number | undefined;
+        if (data.address) {
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: data.address.addressLine1,
+            addressLine2: data.address.addressLine2 || null,
+            pincode: data.address.pincode || null,
+            cityVillage: data.address.cityVillage,
+            district: data.address.district,
+            state: data.address.state,
+            country: data.address.country || 'India',
+          }).returning({ id: addresses.id });
+          addressId = addressResult[0]?.id;
+        }
 
-      if (newBranch.length === 0) {
-        return { success: false, error: 'Failed to create branch' };
-      }
+        const newBranch = await tx.insert(branches).values({
+          name: data.name,
+          code: data.code || null,
+          contactPhone: data.contactPhone || null,
+          organizationId: data.organizationId,
+          timezone: data.timezone || 'Asia/Kolkata',
+          settings: data.settings || null,
+          addressId: addressId || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }).returning();
 
-      return { success: true, data: newBranch[0] as Branch };
+        if (newBranch.length === 0) {
+          throw new Error('Failed to create branch');
+        }
+
+        return { success: true, data: newBranch[0] as Branch };
+      });
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to create branch' };
     }

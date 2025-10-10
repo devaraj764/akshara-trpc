@@ -7,7 +7,6 @@ const createBranchSchema = z.object({
   code: z.string().min(1, 'Branch code is required').max(10, 'Branch code must be 10 characters or less'),
   address: z.string().optional(),
   contactPhone: z.string().optional(),
-  email: z.string().email('Invalid email format').optional(),
   organizationId: z.number().optional(), // Optional because it will default to admin's org
   managerId: z.number().optional(),
 });
@@ -17,8 +16,7 @@ const updateBranchSchema = z.object({
   name: z.string().min(1, 'Branch name is required').optional(),
   code: z.string().min(1, 'Branch code is required').max(10, 'Branch code must be 10 characters or less').optional(),
   address: z.string().optional(),
-  phone: z.string().optional(),
-  email: z.string().email('Invalid email format').optional(),
+  contactPhone: z.string().optional(),
   managerId: z.number().optional(),
   isActive: z.boolean().optional(),
 });

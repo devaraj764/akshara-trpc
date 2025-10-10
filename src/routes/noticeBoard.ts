@@ -252,6 +252,7 @@ export const noticeBoardRouter = router({
       try {
         const result = await NoticeBoardService.create({
           ...input,
+          organizationId: ctx.user.organizationId,
           branchId: ctx.user.branchId || undefined,
           authorId: ctx.user.id
         });
@@ -354,7 +355,7 @@ export const noticeBoardRouter = router({
   getBranchNotices: branchAdminProcedure
     .input(z.object({ 
       includeOrgNotices: z.boolean().optional().default(true),
-      isPublished: z.boolean().optional().default(true)
+      isPublished: z.boolean().optional()
     }))
     .query(async ({ input, ctx }) => {
       try {
@@ -400,8 +401,69 @@ export const noticeBoardRouter = router({
       }
     }),
 
+  branchPublish: branchAdminProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        // Verify the notice belongs to this branch
+        const notice = await NoticeBoardService.getById(input.id);
+        if (!notice.success) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Notice not found'
+          });
+        }
+
+        if (notice.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Not authorized to publish this notice'
+          });
+        }
+
+        const result = await NoticeBoardService.publish(input.id, ctx.user.id);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to publish notice'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to publish notice'
+        });
+      }
+    }),
+
   // Shared procedures
   incrementReadCount: adminProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      try {
+        const result = await NoticeBoardService.incrementReadCount(input.id);
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: result.error || 'Failed to increment read count'
+          });
+        }
+
+        return result.data;
+      } catch (error: any) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to increment read count'
+        });
+      }
+    }),
+
+  branchIncrementReadCount: branchAdminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       try {

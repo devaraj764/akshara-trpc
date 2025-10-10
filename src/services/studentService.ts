@@ -1,9 +1,11 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import db from '../db/index.js';
 import { 
   students,
   organizations,
   branches,
+  addresses,
+  personDetails,
   studentMedicalRecords,
   studentBehavioralRecords,
   studentDocuments,
@@ -23,16 +25,18 @@ interface CreateStudentData {
   admissionNumber?: string;
   dob?: string;
   gender?: string;
-  bloodGroup?: string;
-  address?: string;
   phone?: string;
-  emergencyContact?: {
-    name: string;
-    phone: string;
-    relationship: string;
-    address?: string;
-  };
+  email?: string;
   photoUrl?: string;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   meta?: any;
 }
 
@@ -49,26 +53,36 @@ export class StudentService {
         branchId: students.branchId,
         userId: students.userId,
         admissionNumber: students.admissionNumber,
-        firstName: students.firstName,
-        lastName: students.lastName,
-        dob: students.dob,
-        gender: students.gender,
-        bloodGroup: students.bloodGroup,
-        photoUrl: students.photoUrl,
-        address: students.address,
-        phone: students.phone,
-        emergencyContact: students.emergencyContact,
-        profileUrl: students.profileUrl,
         meta: students.meta,
         isActive: sql<boolean>`NOT ${students.isDeleted}`,
         createdAt: students.createdAt,
         updatedAt: students.updatedAt,
+        // Person details
+        firstName: personDetails.firstName,
+        lastName: personDetails.lastName,
+        dob: personDetails.dob,
+        gender: personDetails.gender,
+        phone: personDetails.phone,
+        email: personDetails.email,
+        photoUrl: personDetails.photoUrl,
+        profileUrl: personDetails.profileUrl,
+        // Address details
+        addressLine1: addresses.addressLine1,
+        addressLine2: addresses.addressLine2,
+        pincode: addresses.pincode,
+        cityVillage: addresses.cityVillage,
+        district: addresses.district,
+        state: addresses.state,
+        country: addresses.country,
         // Current enrollment data
         enrollmentId: enrollments.id,
         gradeName: grades.name,
         sectionName: sections.name,
+        academicYearId: academicYears.id,
       })
       .from(students)
+      .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
+      .leftJoin(addresses, eq(students.addressId, addresses.id))
       .leftJoin(enrollments, and(
         eq(students.id, enrollments.studentId),
         eq(enrollments.status, 'ENROLLED'),
@@ -103,6 +117,8 @@ export class StudentService {
     classId?: number;
     search?: string;
     isActive?: boolean;
+    academicYearId?: number;
+    enrollmentStatus?: 'enrolled' | 'unenrolled';
   } = {}): Promise<ServiceResponse<any[]>> {
     try {
       const whereConditions = [eq(students.isDeleted, false)];
@@ -115,8 +131,28 @@ export class StudentService {
         whereConditions.push(eq(students.branchId, filters.branchId));
       }
 
-      // TODO: Add search functionality when needed
-      // TODO: Add class-based filtering via enrollments table
+      // Add isActive filter (only active students)
+      if (filters.isActive !== undefined) {
+        if (filters.isActive) {
+          // Active students: not deleted
+          whereConditions.push(eq(students.isDeleted, false));
+        } else {
+          // Inactive students: deleted or soft-deleted
+          whereConditions.push(eq(students.isDeleted, true));
+        }
+      }
+
+      // Add search functionality
+      if (filters.search && filters.search.trim()) {
+        const searchTerm = `%${filters.search.trim().toLowerCase()}%`;
+        whereConditions.push(
+          or(
+            sql`LOWER(${personDetails.firstName}) LIKE ${searchTerm}`,
+            sql`LOWER(${personDetails.lastName}) LIKE ${searchTerm}`,
+            sql`LOWER(${students.admissionNumber}) LIKE ${searchTerm}`
+          )
+        );
+      }
 
       const result = await db.select({
         id: students.id,
@@ -124,41 +160,66 @@ export class StudentService {
         branchId: students.branchId,
         userId: students.userId,
         admissionNumber: students.admissionNumber,
-        firstName: students.firstName,
-        lastName: students.lastName,
-        dob: students.dob,
-        gender: students.gender,
-        bloodGroup: students.bloodGroup,
-        photoUrl: students.photoUrl,
-        address: students.address,
-        phone: students.phone,
-        emergencyContact: students.emergencyContact,
-        profileUrl: students.profileUrl,
         meta: students.meta,
         isActive: sql<boolean>`NOT ${students.isDeleted}`,
         createdAt: students.createdAt,
         updatedAt: students.updatedAt,
+        // Person details
+        firstName: personDetails.firstName,
+        lastName: personDetails.lastName,
+        dob: personDetails.dob,
+        gender: personDetails.gender,
+        phone: personDetails.phone,
+        email: personDetails.email,
+        photoUrl: personDetails.photoUrl,
+        profileUrl: personDetails.profileUrl,
+        // Address details
+        addressLine1: addresses.addressLine1,
+        addressLine2: addresses.addressLine2,
+        pincode: addresses.pincode,
+        cityVillage: addresses.cityVillage,
+        district: addresses.district,
+        state: addresses.state,
+        country: addresses.country,
         // Current enrollment data
         enrollmentId: enrollments.id,
         gradeName: grades.name,
         sectionName: sections.name,
+        academicYearId: academicYears.id,
       })
       .from(students)
+      .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
+      .leftJoin(addresses, eq(students.addressId, addresses.id))
       .leftJoin(enrollments, and(
         eq(students.id, enrollments.studentId),
         eq(enrollments.status, 'ENROLLED'),
         eq(enrollments.isDeleted, false)
+        // Always join all enrollments - filtering happens in WHERE clause
       ))
-      .leftJoin(academicYears, and(
-        eq(enrollments.academicYearId, academicYears.id),
-        eq(academicYears.isCurrent, true)
-      ))
+      .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
       .leftJoin(grades, eq(enrollments.gradeId, grades.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .where(and(...whereConditions))
       .orderBy(students.createdAt);
 
-      return { success: true, data: result };
+      let finalResult = result;
+
+      // Apply enrollment status filtering after query if needed
+      if (filters.enrollmentStatus && filters.academicYearId) {
+        if (filters.enrollmentStatus === 'enrolled') {
+          // Only students enrolled in the specified academic year
+          finalResult = result.filter(student => 
+            student.enrollmentId && student.academicYearId === filters.academicYearId
+          );
+        } else if (filters.enrollmentStatus === 'unenrolled') {
+          // Students not enrolled in the specified academic year
+          finalResult = result.filter(student => 
+            !student.enrollmentId || student.academicYearId !== filters.academicYearId
+          );
+        }
+      }
+
+      return { success: true, data: finalResult };
     } catch (error: any) {
       console.error('Error fetching students:', error);
       return { success: false, error: error.message || 'Failed to fetch students' };
@@ -167,51 +228,70 @@ export class StudentService {
 
   static async create(data: CreateStudentData): Promise<ServiceResponse<any>> {
     try {
-      // Generate admission number if not provided
-      let admissionNumber = data.admissionNumber;
-      if (!admissionNumber) {
-        const currentYear = new Date().getFullYear();
-        const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        admissionNumber = `${currentYear}/ADM/${randomNum}`;
-      }
+      return await db.transaction(async (tx) => {
+        // Generate admission number if not provided
+        let admissionNumber = data.admissionNumber;
+        if (!admissionNumber) {
+          const currentYear = new Date().getFullYear();
+          const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+          admissionNumber = `${currentYear}/ADM/${randomNum}`;
+        }
 
-      const result = await db.insert(students).values({
-        organizationId: data.organizationId,
-        branchId: data.branchId,
-        firstName: data.firstName,
-        lastName: data.lastName,
-        admissionNumber,
-        dob: data.dob,
-        gender: data.gender,
-        bloodGroup: data.bloodGroup,
-        address: data.address,
-        phone: data.phone,
-        emergencyContact: data.emergencyContact ? JSON.stringify(data.emergencyContact) : null,
-        photoUrl: data.photoUrl,
-        meta: data.meta ? JSON.stringify(data.meta) : null,
-      }).returning({
-        id: students.id,
-        organizationId: students.organizationId,
-        branchId: students.branchId,
-        userId: students.userId,
-        admissionNumber: students.admissionNumber,
-        firstName: students.firstName,
-        lastName: students.lastName,
-        dob: students.dob,
-        gender: students.gender,
-        bloodGroup: students.bloodGroup,
-        photoUrl: students.photoUrl,
-        address: students.address,
-        phone: students.phone,
-        emergencyContact: students.emergencyContact,
-        profileUrl: students.profileUrl,
-        meta: students.meta,
-        isActive: sql<boolean>`NOT ${students.isDeleted}`,
-        createdAt: students.createdAt,
-        updatedAt: students.updatedAt
+        // Create address if provided
+        let addressId: number | undefined;
+        if (data.address) {
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: data.address.addressLine1,
+            addressLine2: data.address.addressLine2,
+            pincode: data.address.pincode,
+            cityVillage: data.address.cityVillage,
+            district: data.address.district,
+            state: data.address.state,
+            country: data.address.country || 'India',
+          }).returning({ id: addresses.id });
+          addressId = addressResult[0]?.id;
+        }
+
+        // Create person details
+        const personDetailsResult = await tx.insert(personDetails).values({
+          firstName: data.firstName,
+          lastName: data.lastName,
+          dob: data.dob,
+          gender: data.gender,
+          phone: data.phone,
+          email: data.email,
+          photoUrl: data.photoUrl,
+        }).returning({ id: personDetails.id });
+
+        const personDetailId = personDetailsResult[0]?.id;
+        if (!personDetailId) {
+          throw new Error('Failed to create person details');
+        }
+
+        // Create student record
+        const result = await tx.insert(students).values({
+          organizationId: data.organizationId,
+          branchId: data.branchId,
+          addressId: addressId,
+          personDetailId: personDetailId,
+          admissionNumber,
+          meta: data.meta ? JSON.stringify(data.meta) : null,
+        }).returning({
+          id: students.id,
+          organizationId: students.organizationId,
+          branchId: students.branchId,
+          userId: students.userId,
+          admissionNumber: students.admissionNumber,
+          addressId: students.addressId,
+          personDetailId: students.personDetailId,
+          meta: students.meta,
+          isActive: sql<boolean>`NOT ${students.isDeleted}`,
+          createdAt: students.createdAt,
+          updatedAt: students.updatedAt
+        });
+
+        return { success: true, data: result[0] };
       });
-
-      return { success: true, data: result[0] };
     } catch (error: any) {
       console.error('Error creating student:', error);
       return { success: false, error: error.message || 'Failed to create student' };
@@ -220,59 +300,113 @@ export class StudentService {
 
   static async update(data: UpdateStudentData): Promise<ServiceResponse<any>> {
     try {
-      const updateData: any = {};
-      
-      if (data.firstName !== undefined) updateData.firstName = data.firstName;
-      if (data.lastName !== undefined) updateData.lastName = data.lastName;
-      if (data.admissionNumber !== undefined) updateData.admissionNumber = data.admissionNumber;
-      if (data.dob !== undefined) updateData.dob = data.dob;
-      if (data.gender !== undefined) updateData.gender = data.gender;
-      if (data.bloodGroup !== undefined) updateData.bloodGroup = data.bloodGroup;
-      if (data.address !== undefined) updateData.address = data.address;
-      if (data.phone !== undefined) updateData.phone = data.phone;
-      if (data.photoUrl !== undefined) updateData.photoUrl = data.photoUrl;
-      if (data.emergencyContact !== undefined) {
-        updateData.emergencyContact = data.emergencyContact ? JSON.stringify(data.emergencyContact) : null;
-      }
-      if (data.meta !== undefined) {
-        updateData.meta = data.meta ? JSON.stringify(data.meta) : null;
-      }
-
-      updateData.updatedAt = sql`CURRENT_TIMESTAMP`;
-
-      const result = await db.update(students)
-        .set(updateData)
+      return await db.transaction(async (tx) => {
+        // Get current student data to know which records to update
+        const currentStudent = await tx.select({
+          id: students.id,
+          addressId: students.addressId,
+          personDetailId: students.personDetailId,
+        })
+        .from(students)
         .where(and(
           eq(students.id, data.id),
           eq(students.isDeleted, false)
         ))
-        .returning({
+        .limit(1);
+
+        if (currentStudent.length === 0) {
+          throw new Error('Student not found or already deleted');
+        }
+
+        const student = currentStudent[0];
+
+        // Update address if provided
+        if (data.address && student.addressId) {
+          await tx.update(addresses)
+            .set({
+              addressLine1: data.address.addressLine1,
+              addressLine2: data.address.addressLine2,
+              pincode: data.address.pincode,
+              cityVillage: data.address.cityVillage,
+              district: data.address.district,
+              state: data.address.state,
+              country: data.address.country || 'India',
+              updatedAt: sql`CURRENT_TIMESTAMP`,
+            })
+            .where(eq(addresses.id, student.addressId));
+        } else if (data.address && !student.addressId) {
+          // Create new address if student doesn't have one
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: data.address.addressLine1,
+            addressLine2: data.address.addressLine2,
+            pincode: data.address.pincode,
+            cityVillage: data.address.cityVillage,
+            district: data.address.district,
+            state: data.address.state,
+            country: data.address.country || 'India',
+          }).returning({ id: addresses.id });
+          
+          const addressId = addressResult[0]?.id;
+          if (addressId) {
+            await tx.update(students)
+              .set({ addressId })
+              .where(eq(students.id, data.id));
+          }
+        }
+
+        // Update person details
+        if (student.personDetailId) {
+          const personUpdateData: any = {};
+          if (data.firstName !== undefined) personUpdateData.firstName = data.firstName;
+          if (data.lastName !== undefined) personUpdateData.lastName = data.lastName;
+          if (data.dob !== undefined) personUpdateData.dob = data.dob;
+          if (data.gender !== undefined) personUpdateData.gender = data.gender;
+          if (data.phone !== undefined) personUpdateData.phone = data.phone;
+          if (data.email !== undefined) personUpdateData.email = data.email;
+          if (data.photoUrl !== undefined) personUpdateData.photoUrl = data.photoUrl;
+
+          if (Object.keys(personUpdateData).length > 0) {
+            personUpdateData.updatedAt = sql`CURRENT_TIMESTAMP`;
+            await tx.update(personDetails)
+              .set(personUpdateData)
+              .where(eq(personDetails.id, student.personDetailId));
+          }
+        }
+
+        // Update student record itself
+        const studentUpdateData: any = {};
+        if (data.admissionNumber !== undefined) studentUpdateData.admissionNumber = data.admissionNumber;
+        if (data.meta !== undefined) {
+          studentUpdateData.meta = data.meta ? JSON.stringify(data.meta) : null;
+        }
+
+        if (Object.keys(studentUpdateData).length > 0) {
+          studentUpdateData.updatedAt = sql`CURRENT_TIMESTAMP`;
+          await tx.update(students)
+            .set(studentUpdateData)
+            .where(eq(students.id, data.id));
+        }
+
+        // Return updated student data
+        const result = await tx.select({
           id: students.id,
           organizationId: students.organizationId,
           branchId: students.branchId,
           userId: students.userId,
           admissionNumber: students.admissionNumber,
-          firstName: students.firstName,
-          lastName: students.lastName,
-          dob: students.dob,
-          gender: students.gender,
-          bloodGroup: students.bloodGroup,
-          photoUrl: students.photoUrl,
-          address: students.address,
-          phone: students.phone,
-          emergencyContact: students.emergencyContact,
-          profileUrl: students.profileUrl,
+          addressId: students.addressId,
+          personDetailId: students.personDetailId,
           meta: students.meta,
           isActive: sql<boolean>`NOT ${students.isDeleted}`,
           createdAt: students.createdAt,
           updatedAt: students.updatedAt
-        });
+        })
+        .from(students)
+        .where(eq(students.id, data.id))
+        .limit(1);
 
-      if (result.length === 0) {
-        return { success: false, error: 'Student not found or already deleted' };
-      }
-
-      return { success: true, data: result[0] };
+        return { success: true, data: result[0] };
+      });
     } catch (error: any) {
       console.error('Error updating student:', error);
       return { success: false, error: error.message || 'Failed to update student' };
@@ -475,7 +609,7 @@ export class StudentService {
 
       const result = await db.select({
         studentId: students.id,
-        studentName: sql<string>`CONCAT(${students.firstName}, ' ', ${students.lastName})`,
+        studentName: sql<string>`CONCAT(${personDetails.firstName}, ' ', ${personDetails.lastName})`,
         branchName: branches.name,
         incidentDate: studentBehavioralRecords.incidentDate,
         incidentType: studentBehavioralRecords.incidentType,
@@ -485,6 +619,7 @@ export class StudentService {
         parentNotified: studentBehavioralRecords.parentNotified
       })
         .from(students)
+        .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
         .leftJoin(branches, eq(students.branchId, branches.id))
         .leftJoin(studentBehavioralRecords, eq(students.id, studentBehavioralRecords.studentId))
         .where(and(...whereConditions))
@@ -500,7 +635,7 @@ export class StudentService {
     try {
       const result = await db.select({
         studentId: students.id,
-        studentName: sql<string>`CONCAT(${students.firstName}, ' ', ${students.lastName})`,
+        studentName: sql<string>`CONCAT(${personDetails.firstName}, ' ', ${personDetails.lastName})`,
         allergies: studentMedicalRecords.allergies,
         medicalConditions: studentMedicalRecords.medicalConditions,
         medications: studentMedicalRecords.medications,
@@ -508,6 +643,7 @@ export class StudentService {
         emergencyMedicalContact: studentMedicalRecords.emergencyMedicalContact
       })
         .from(students)
+        .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
         .leftJoin(studentMedicalRecords, eq(students.id, studentMedicalRecords.studentId))
         .where(
           and(
@@ -515,7 +651,7 @@ export class StudentService {
             sql`(${studentMedicalRecords.allergies} IS NOT NULL OR ${studentMedicalRecords.medicalConditions} IS NOT NULL OR ${studentMedicalRecords.specialNeeds} IS NOT NULL)`
           )
         )
-        .orderBy(students.firstName);
+        .orderBy(personDetails.firstName);
 
       return { success: true, data: result };
     } catch (error: any) {
@@ -543,7 +679,7 @@ export class StudentService {
 
       const result = await db.select({
         studentId: students.id,
-        studentName: sql<string>`CONCAT(${students.firstName}, ' ', ${students.lastName})`,
+        studentName: sql<string>`CONCAT(${personDetails.firstName}, ' ', ${personDetails.lastName})`,
         documentType: studentDocuments.documentType,
         documentName: studentDocuments.documentName,
         expiryDate: studentDocuments.expiryDate,
@@ -552,6 +688,7 @@ export class StudentService {
       })
         .from(studentDocuments)
         .leftJoin(students, eq(studentDocuments.studentId, students.id))
+        .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
         .leftJoin(organizations, eq(students.organizationId, organizations.id))
         .leftJoin(branches, eq(students.branchId, branches.id))
         .where(and(...whereConditions))

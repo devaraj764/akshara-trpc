@@ -316,7 +316,7 @@ export class NoticeBoardService {
   }
 
   // Organization Level Methods
-  static async getOrganizationNotices(organizationId: number, isPublished: boolean = true): Promise<ServiceResponse<any[]>> {
+  static async getOrganizationNotices(organizationId: number, isPublished?: boolean): Promise<ServiceResponse<any[]>> {
     return this.getAll({
       organizationId,
       isPublished,
@@ -325,7 +325,7 @@ export class NoticeBoardService {
   }
 
   // Branch Level Methods
-  static async getBranchNotices(branchId: number, isPublished: boolean = true): Promise<ServiceResponse<any[]>> {
+  static async getBranchNotices(branchId: number, isPublished?: boolean): Promise<ServiceResponse<any[]>> {
     return this.getAll({
       branchId,
       isPublished,

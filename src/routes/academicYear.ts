@@ -39,8 +39,8 @@ const updateAcademicYearSchema = z.object({
 );
 
 export const academicYearRouter = router({
-  // Get all academic years - accessible by admins and branch admins
-  getAll: branchAdminProcedure
+  // Get all academic years - accessible by admins, branch admins, and teachers
+  getAll: protectedProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),
@@ -50,6 +50,15 @@ export const academicYearRouter = router({
     .query(async ({ input, ctx }) => {
       // For admins, they can specify organizationId, otherwise use their organization
       const organizationId = input.organizationId || ctx.user.organizationId;
+      
+      // Teachers can only access their own organization's academic years
+      if (!['ADMIN', 'SUPER_ADMIN', 'BRANCH_ADMIN'].includes(ctx.user.role) && 
+          input.organizationId && input.organizationId !== ctx.user.organizationId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Access denied to academic years from other organizations',
+        });
+      }
       
       const result = await AcademicYearService.getAll({
         ...input,
@@ -66,8 +75,8 @@ export const academicYearRouter = router({
       return result.data;
     }),
 
-  // Get academic year by ID - accessible by admins and branch admins
-  getById: branchAdminProcedure
+  // Get academic year by ID - accessible by admins, branch admins, and teachers
+  getById: protectedProcedure
     .input(z.object({
       id: z.number().positive(),
     }))
@@ -81,8 +90,8 @@ export const academicYearRouter = router({
         });
       }
 
-      // For non-admins, ensure they can only access academic years from their organization
-      if (ctx.user.role !== 'ADMIN' && result.data.organizationId !== ctx.user.organizationId) {
+      // For non-admins (including teachers), ensure they can only access academic years from their organization
+      if (!['ADMIN', 'SUPER_ADMIN'].includes(ctx.user.role) && result.data.organizationId !== ctx.user.organizationId) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Access denied to this academic year',
@@ -92,8 +101,8 @@ export const academicYearRouter = router({
       return result.data;
     }),
 
-  // Get current academic year - accessible by admins and branch admins
-  getCurrent: branchAdminProcedure
+  // Get current academic year - accessible by admins, branch admins, and teachers
+  getCurrent: protectedProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),
@@ -101,6 +110,15 @@ export const academicYearRouter = router({
     .query(async ({ input, ctx }) => {
       // Use user's organization if not specified
       const organizationId = input.organizationId || ctx.user.organizationId;
+      
+      // Teachers can only access their own organization's academic years
+      if (!['ADMIN', 'SUPER_ADMIN', 'BRANCH_ADMIN'].includes(ctx.user.role) && 
+          input.organizationId && input.organizationId !== ctx.user.organizationId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Access denied to academic years from other organizations',
+        });
+      }
       
       if (!organizationId) {
         throw new TRPCError({

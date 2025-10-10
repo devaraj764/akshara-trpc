@@ -2,11 +2,14 @@ import { z } from 'zod';
 import { router, protectedProcedure, branchAdminProcedure, adminProcedure, teacherProcedure, TRPCError } from '../trpc.js';
 import { StudentService } from '../services/studentService.js';
 
-const emergencyContactSchema = z.object({
-  name: z.string(),
-  phone: z.string(),
-  relationship: z.string(),
-  address: z.string().optional(),
+const addressSchema = z.object({
+  addressLine1: z.string().min(1, 'Address line 1 is required'),
+  addressLine2: z.string().optional(),
+  pincode: z.string().optional(),
+  cityVillage: z.string().min(1, 'City/Village is required'),
+  district: z.string().min(1, 'District is required'),
+  state: z.string().min(1, 'State is required'),
+  country: z.string().optional(),
 });
 
 const createStudentSchema = z.object({
@@ -17,10 +20,9 @@ const createStudentSchema = z.object({
   admissionNumber: z.string().optional(),
   dob: z.string().optional(),
   gender: z.string().optional(),
-  bloodGroup: z.string().optional(),
-  address: z.string().optional(),
   phone: z.string().optional(),
-  emergencyContact: emergencyContactSchema.optional(),
+  email: z.string().email().optional(),
+  address: addressSchema.optional(),
   photoUrl: z.string().optional(),
   meta: z.any().optional(),
 });
@@ -32,10 +34,9 @@ const updateStudentSchema = z.object({
   admissionNumber: z.string().optional(),
   dob: z.string().optional(),
   gender: z.string().optional(),
-  bloodGroup: z.string().optional(),
-  address: z.string().optional(),
   phone: z.string().optional(),
-  emergencyContact: emergencyContactSchema.optional(),
+  email: z.string().email().optional(),
+  address: addressSchema.optional(),
   photoUrl: z.string().optional(),
   meta: z.any().optional(),
 });
@@ -66,6 +67,8 @@ export const studentRouter = router({
       branchId: z.number().optional(),
       search: z.string().optional(),
       isActive: z.boolean().optional(),
+      academicYearId: z.number().optional(),
+      enrollmentStatus: z.enum(['enrolled', 'unenrolled']).optional(),
     }).optional())
     .query(async ({ input, ctx }) => {
       // For non-admin users, use their organization/branch context
@@ -74,6 +77,8 @@ export const studentRouter = router({
         branchId: ctx.user.role === 'ADMIN' || ctx.user.role === 'SUPER_ADMIN' ? input?.branchId : ctx.user.branchId,
         search: input?.search,
         isActive: input?.isActive,
+        academicYearId: input?.academicYearId,
+        enrollmentStatus: input?.enrollmentStatus,
       };
 
       const result = await StudentService.getAll(filters);

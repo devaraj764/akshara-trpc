@@ -1,12 +1,38 @@
 import { eq, and, sql } from 'drizzle-orm';
 import db from '../db/index.js';
-import { organizations } from '../db/schema.js';
+import { organizations, addresses } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
+
+export interface CreateOrganizationData {
+  name: string;
+  registrationNumber?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
+  contactEmail?: string | undefined;
+  contactPhone?: string | undefined;
+  settings?: any;
+  status?: string | undefined;
+}
 
 export interface UpdateOrganizationData {
   name?: string | undefined;
   registrationNumber?: string | undefined;
-  address?: string | undefined;
+  address?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   contactEmail?: string | undefined;
   contactPhone?: string | undefined;
   settings?: any;
@@ -92,8 +118,57 @@ export class OrganizationService {
     }
   }
 
-  static async create(data: any): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+  static async create(data: CreateOrganizationData): Promise<ServiceResponse<any>> {
+    try {
+      // Validate required fields
+      if (!data.name) {
+        return { success: false, error: 'Organization name is required' };
+      }
+
+      return await db.transaction(async (tx) => {
+        // Create address if provided
+        let addressId: number | undefined;
+        if (data.address) {
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: data.address.addressLine1,
+            addressLine2: data.address.addressLine2 || null,
+            pincode: data.address.pincode || null,
+            cityVillage: data.address.cityVillage,
+            district: data.address.district,
+            state: data.address.state,
+            country: data.address.country || 'India',
+          }).returning({ id: addresses.id });
+          addressId = addressResult[0]?.id;
+        }
+
+        // Create organization
+        const result = await tx.insert(organizations).values({
+          name: data.name,
+          registrationNumber: data.registrationNumber || null,
+          contactEmail: data.contactEmail || null,
+          contactPhone: data.contactPhone || null,
+          settings: data.settings || null,
+          status: data.status || 'ACTIVE',
+          addressId: addressId || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }).returning();
+
+        if (result.length === 0) {
+          throw new Error('Failed to create organization');
+        }
+
+        return {
+          success: true,
+          data: result[0]
+        };
+      });
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || 'Failed to create organization'
+      };
+    }
   }
 
   static async update(id: number, data: UpdateOrganizationData): Promise<ServiceResponse<any>> {

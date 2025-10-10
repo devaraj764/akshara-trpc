@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import db from '../db/index.js';
-import { users, userRoles, organizations, roleEnum } from '../db/schema.js';
+import { users, userRoles, organizations, roleEnum, addresses } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
 // Types
@@ -14,7 +14,15 @@ export interface SignUpData {
   role?: string | undefined;
   organizationName: string;
   organizationRegistrationNumber?: string | undefined;
-  organizationAddress?: string | undefined;
+  organizationAddress?: {
+    addressLine1: string;
+    addressLine2?: string;
+    pincode?: string;
+    cityVillage: string;
+    district: string;
+    state: string;
+    country?: string;
+  };
   organizationPhone?: string | undefined;
   organizationEmail?: string | undefined;
   branchId?: number | undefined;
@@ -247,18 +255,41 @@ class AuthService {
         return { success: false, error: 'User already exists' };
       }
 
-      // Create organization first
-      const newOrg = await db.insert(organizations).values({
-        name: organizationName,
-        registrationNumber: organizationRegistrationNumber || null,
-        address: organizationAddress || null,
-        contactPhone: organizationPhone || null,
-        contactEmail: organizationEmail || null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }).returning();
+      // Create organization with address using transaction
+      const organization = await db.transaction(async (tx) => {
+        // Create address if provided
+        let addressId: number | undefined;
+        if (organizationAddress) {
+          const addressResult = await tx.insert(addresses).values({
+            addressLine1: organizationAddress.addressLine1,
+            addressLine2: organizationAddress.addressLine2 || null,
+            pincode: organizationAddress.pincode || null,
+            cityVillage: organizationAddress.cityVillage,
+            district: organizationAddress.district,
+            state: organizationAddress.state,
+            country: organizationAddress.country || 'India',
+          }).returning({ id: addresses.id });
+          addressId = addressResult[0]?.id;
+        }
 
-      const organization = newOrg[0];
+        // Create organization
+        const newOrg = await tx.insert(organizations).values({
+          name: organizationName,
+          registrationNumber: organizationRegistrationNumber || null,
+          contactPhone: organizationPhone || null,
+          contactEmail: organizationEmail || null,
+          addressId: addressId || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }).returning();
+
+        const org = newOrg[0];
+        if (!org) {
+          throw new Error('Failed to create organization');
+        }
+        return org;
+      });
+
       if (!organization) {
         return { success: false, error: 'Failed to create organization' };
       }
