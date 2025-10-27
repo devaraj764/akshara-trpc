@@ -24,7 +24,7 @@ const updateClassSchema = z.object({
 });
 
 const createSectionSchema = z.object({
-  gradeId: z.number(),
+  classId: z.number(),
   name: z.string().min(1, 'Section name is required'),
   capacity: z.number().positive().nullable().optional().transform(val => val === null ? undefined : val),
   branchId: z.number(),
@@ -171,31 +171,41 @@ export const classRouter = router({
       organizationId: z.number().positive().optional(),
     }).optional())
     .query(async ({ input, ctx }) => {
-      // Only SUPER_ADMIN can specify organizationId, others use their own
-      let organizationId: number;
+      try {
+        // Only SUPER_ADMIN can specify organizationId, others use their own
+        let organizationId: number;
 
-      if (ctx.user.role === 'SUPER_ADMIN' && input?.organizationId) {
-        organizationId = input.organizationId;
-      } else {
-        if (!ctx.user.organizationId) {
+        if (ctx.user.role === 'SUPER_ADMIN' && input?.organizationId) {
+          organizationId = input.organizationId;
+        } else {
+          if (!ctx.user.organizationId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Organization ID is required',
+            });
+          }
+          organizationId = ctx.user.organizationId;
+        }
+
+
+        const result = await ClassService.getEnabledForOrganization(organizationId);
+
+        if (!result.success) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'Organization ID is required',
+            message: result.error || 'Failed to fetch enabled classes',
           });
         }
-        organizationId = ctx.user.organizationId;
-      }
 
-      const result = await ClassService.getEnabledForOrganization(organizationId);
-
-      if (!result.success) {
+        return result.data;
+      } catch (error: any) {
+        console.error('Error in getEnabledForOrganization route:', error);
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: result.error || 'Failed to fetch enabled classes',
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error.message || 'Failed to fetch enabled classes'
         });
       }
-
-      return result.data;
     }),
 
   // Get private classes for organization
@@ -234,17 +244,17 @@ export const classRouter = router({
       return result.data;
     }),
 
-  getEnabledGrades: protectedProcedure
+  getEnabledClasses: protectedProcedure
     .input(z.object({ organizationId: z.number().int().positive().optional() }))
     .query(async ({ input, ctx }) => {
       try {
         const organizationId = input.organizationId || ctx.user.organizationId;
-        const result = await ClassService.getEnabledGrades(organizationId);
+        const result = await ClassService.getEnabledClasses(organizationId);
 
         if (!result.success) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: result.error || 'Failed to fetch enabled grades'
+            message: result.error || 'Failed to fetch enabled classes'
           });
         }
 
@@ -253,7 +263,7 @@ export const classRouter = router({
         if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: error.message || 'Failed to fetch enabled grades'
+          message: error.message || 'Failed to fetch enabled classes'
         });
       }
     }),
@@ -312,6 +322,28 @@ export const classRouter = router({
           message: error.message || 'Failed to remove or delete class'
         });
       }
+    }),
+
+  // Restore soft-deleted class
+  restore: adminProcedure
+    .input(z.object({
+      id: z.number(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await ClassService.restore(
+        input.id,
+        ctx.user.role,
+        ctx.user.organizationId
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to restore class',
+        });
+      }
+
+      return result.data;
     }),
 });
 

@@ -1,12 +1,12 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import db from '../db/index.js';
-import { enrollments, students, grades, sections, academicYears } from '../db/schema.js';
+import { enrollments, students, classes, sections, academicYears } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
 interface CreateEnrollmentData {
   studentId: number;
   branchId: number;
-  gradeId: number;
+  classId: number;
   sectionId?: number;
   academicYearId: number;
   rollNumber?: number;
@@ -15,7 +15,7 @@ interface CreateEnrollmentData {
 
 interface UpdateEnrollmentData {
   id: number;
-  gradeId?: number;
+  classId?: number;
   sectionId?: number;
   rollNumber?: number;
   status?: string;
@@ -28,7 +28,7 @@ export class EnrollmentService {
         id: enrollments.id,
         studentId: enrollments.studentId,
         branchId: enrollments.branchId,
-        gradeId: enrollments.gradeId,
+        classId: enrollments.classId,
         sectionId: enrollments.sectionId,
         academicYearId: enrollments.academicYearId,
         rollNumber: enrollments.rollNumber,
@@ -42,8 +42,8 @@ export class EnrollmentService {
           admissionNumber: students.admissionNumber,
         },
         grade: {
-          id: grades.id,
-          name: grades.name,
+          id: classes.id,
+          name: classes.name,
         },
         section: {
           id: sections.id,
@@ -58,7 +58,7 @@ export class EnrollmentService {
       })
       .from(enrollments)
       .leftJoin(students, eq(enrollments.studentId, students.id))
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
       .where(and(
@@ -93,7 +93,7 @@ export class EnrollmentService {
         id: enrollments.id,
         studentId: enrollments.studentId,
         branchId: enrollments.branchId,
-        gradeId: enrollments.gradeId,
+        classId: enrollments.classId,
         sectionId: enrollments.sectionId,
         academicYearId: enrollments.academicYearId,
         rollNumber: enrollments.rollNumber,
@@ -101,8 +101,8 @@ export class EnrollmentService {
         enrolledAt: enrollments.enrolledAt,
         leftAt: enrollments.leftAt,
         grade: {
-          id: grades.id,
-          name: grades.name,
+          id: classes.id,
+          name: classes.name,
         },
         section: {
           id: sections.id,
@@ -114,7 +114,7 @@ export class EnrollmentService {
         }
       })
       .from(enrollments)
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
       .where(and(...whereConditions))
@@ -129,7 +129,7 @@ export class EnrollmentService {
 
   static async getAll(filters: { 
     branchId?: number; 
-    gradeId?: number;
+    classId?: number;
     sectionId?: number;
     academicYearId?: number;
     status?: string;
@@ -141,8 +141,8 @@ export class EnrollmentService {
         whereConditions.push(eq(enrollments.branchId, filters.branchId));
       }
 
-      if (filters.gradeId) {
-        whereConditions.push(eq(enrollments.gradeId, filters.gradeId));
+      if (filters.classId) {
+        whereConditions.push(eq(enrollments.classId, filters.classId));
       }
 
       if (filters.sectionId) {
@@ -161,7 +161,7 @@ export class EnrollmentService {
         id: enrollments.id,
         studentId: enrollments.studentId,
         branchId: enrollments.branchId,
-        gradeId: enrollments.gradeId,
+        classId: enrollments.classId,
         sectionId: enrollments.sectionId,
         academicYearId: enrollments.academicYearId,
         rollNumber: enrollments.rollNumber,
@@ -175,8 +175,8 @@ export class EnrollmentService {
           admissionNumber: students.admissionNumber,
         },
         grade: {
-          id: grades.id,
-          name: grades.name,
+          id: classes.id,
+          name: classes.name,
         },
         section: {
           id: sections.id,
@@ -189,7 +189,7 @@ export class EnrollmentService {
       })
       .from(enrollments)
       .leftJoin(students, eq(enrollments.studentId, students.id))
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
       .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
@@ -209,7 +209,8 @@ export class EnrollmentService {
         .from(enrollments)
         .where(and(
           eq(enrollments.studentId, data.studentId),
-          eq(enrollments.academicYearId, data.academicYearId)
+          eq(enrollments.academicYearId, data.academicYearId),
+          eq(enrollments.isDeleted, false)
         ))
         .limit(1);
 
@@ -217,21 +218,38 @@ export class EnrollmentService {
         return { success: false, error: 'Student is already enrolled in this academic year' };
       }
 
+      // Auto-assign roll number if not provided and section is specified
+      let rollNumber = data.rollNumber;
+      if (!rollNumber && data.sectionId) {
+        // Get the highest roll number for this section in the current academic year
+        const maxRollResult = await db.select({
+          maxRoll: sql<number>`COALESCE(MAX(${enrollments.rollNumber}), 0)`
+        })
+        .from(enrollments)
+        .where(and(
+          eq(enrollments.sectionId, data.sectionId),
+          eq(enrollments.academicYearId, data.academicYearId),
+          eq(enrollments.isDeleted, false)
+        ));
+
+        rollNumber = (maxRollResult[0]?.maxRoll || 0) + 1;
+      }
+
       const result = await db.insert(enrollments)
         .values({
           studentId: data.studentId,
           branchId: data.branchId,
-          gradeId: data.gradeId,
+          classId: data.classId,
           sectionId: data.sectionId,
           academicYearId: data.academicYearId,
-          rollNumber: data.rollNumber,
+          rollNumber: rollNumber,
           status: data.status || 'ENROLLED',
         })
         .returning({
           id: enrollments.id,
           studentId: enrollments.studentId,
           branchId: enrollments.branchId,
-          gradeId: enrollments.gradeId,
+          classId: enrollments.classId,
           sectionId: enrollments.sectionId,
           academicYearId: enrollments.academicYearId,
           rollNumber: enrollments.rollNumber,
@@ -250,7 +268,7 @@ export class EnrollmentService {
     try {
       const updateData: any = {};
       
-      if (data.gradeId !== undefined) updateData.gradeId = data.gradeId;
+      if (data.classId !== undefined) updateData.classId = data.classId;
       if (data.sectionId !== undefined) updateData.sectionId = data.sectionId;
       if (data.rollNumber !== undefined) updateData.rollNumber = data.rollNumber;
       if (data.status !== undefined) updateData.status = data.status;
@@ -262,7 +280,7 @@ export class EnrollmentService {
           id: enrollments.id,
           studentId: enrollments.studentId,
           branchId: enrollments.branchId,
-          gradeId: enrollments.gradeId,
+          classId: enrollments.classId,
           sectionId: enrollments.sectionId,
           academicYearId: enrollments.academicYearId,
           rollNumber: enrollments.rollNumber,
@@ -315,17 +333,18 @@ export class EnrollmentService {
         id: enrollments.id,
         studentId: enrollments.studentId,
         branchId: enrollments.branchId,
-        gradeId: enrollments.gradeId,
+        classId: enrollments.classId,
         sectionId: enrollments.sectionId,
         academicYearId: enrollments.academicYearId,
         rollNumber: enrollments.rollNumber,
         status: enrollments.status,
         enrolledAt: enrollments.enrolledAt,
-        gradeName: grades.name,
+        className: classes.name,
         sectionName: sections.name,
+        academicYearName: academicYears.name,
       })
       .from(enrollments)
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
       .where(and(

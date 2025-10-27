@@ -165,7 +165,7 @@ export const departmentRouter = router({
       id: z.number().positive(),
     }))
     .mutation(async ({ input, ctx }) => {
-      const result = await DepartmentService.restore(input.id);
+      const result = await DepartmentService.restore(input.id, ctx.user.organizationId);
       
       if (!result.success) {
         throw new TRPCError({

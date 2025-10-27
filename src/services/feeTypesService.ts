@@ -1,4 +1,4 @@
-import { eq, and, sql, asc, inArray } from 'drizzle-orm';
+import { eq, and, sql, asc, inArray, or } from 'drizzle-orm';
 import db from '../db/index.js';
 import { 
   feeTypes,
@@ -208,25 +208,46 @@ export class FeeTypesService {
     }
   }
 
-  // Get enabled fee types for an organization
+  // Get enabled fee types for an organization (including deleted ones for restore functionality)
   static async getEnabledFeeTypes(organizationId: number): Promise<ServiceResponse<any[]>> {
     try {
+      console.log('getEnabledFeeTypes called with organizationId:', organizationId);
+      
       // Get enabled fee type IDs from organization
       const orgResult = await db.select({ enabledFeetypes: organizations.enabledFeetypes })
         .from(organizations)
         .where(eq(organizations.id, organizationId))
         .limit(1);
 
+      console.log('Organization result (fee types):', orgResult);
+
       if (orgResult.length === 0) {
         return { success: false, error: 'Organization not found' };
       }
 
       const enabledIds = orgResult[0]?.enabledFeetypes || [];
-      if (enabledIds.length === 0) {
-        return { success: true, data: [] };
+      console.log('Enabled fee type IDs:', enabledIds);
+      
+      // Include ALL fee types that either:
+      // 1. Are in the enabled list (global + enabled private fee types)
+      // 2. OR belong to this organization (all org fee types including deleted ones)
+      const conditions = [];
+      
+      // Add enabled fee types condition
+      if (enabledIds.length > 0) {
+        conditions.push(inArray(feeTypes.id, enabledIds));
+        console.log('Added condition for enabled fee types');
       }
+      
+      // Add organization-owned fee types condition (including deleted ones)
+      conditions.push(eq(feeTypes.organizationId, organizationId));
+      console.log('Added condition for ALL organization fee types');
+      
+      // Use OR to combine both conditions
+      const finalCondition = conditions.length > 1 ? or(...conditions) : conditions[0];
+      console.log('Using OR condition to combine enabled + organization fee types');
 
-      // Fetch the enabled fee types
+      // Fetch the fee types
       const result = await db.select({
         id: feeTypes.id,
         organizationId: feeTypes.organizationId,
@@ -241,17 +262,139 @@ export class FeeTypesService {
       })
         .from(feeTypes)
         .leftJoin(organizations, eq(feeTypes.organizationId, organizations.id))
-        .where(
-          and(
-            inArray(feeTypes.id, enabledIds),
-            eq(feeTypes.isDeleted, false)
-          )
-        )
-        .orderBy(asc(feeTypes.name));
+        .where(finalCondition)
+        .orderBy(feeTypes.isDeleted, asc(feeTypes.name));
+
+      console.log('Query result (fee types):', result.length, 'fee types found');
+      console.log('Result preview (fee types):', result.map(f => ({ id: f.id, name: f.name, isDeleted: f.isDeleted, organizationId: f.organizationId })));
 
       return { success: true, data: result };
     } catch (error: any) {
+      console.error('Error in getEnabledFeeTypes:', error);
       return { success: false, error: error.message || 'Failed to fetch enabled fee types' };
+    }
+  }
+
+  // Restore fee type and add back to enabled list
+  static async restore(id: number, organizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      console.log('Restoring fee type with ID:', id);
+      
+      // First get the fee type to check if it exists and get organization info
+      const feeTypeResult = await db.select({
+        id: feeTypes.id,
+        name: feeTypes.name,
+        organizationId: feeTypes.organizationId,
+        isDeleted: feeTypes.isDeleted,
+        isPrivate: feeTypes.isPrivate
+      })
+      .from(feeTypes)
+      .where(eq(feeTypes.id, id))
+      .limit(1);
+
+      if (feeTypeResult.length === 0) {
+        return {
+          success: false,
+          error: 'Fee type not found'
+        };
+      }
+
+      const feeType = feeTypeResult[0];
+      console.log('Fee type found:', feeType);
+
+      // For private fee types, they must be deleted to restore
+      if (feeType.isPrivate && feeType.organizationId) {
+        if (!feeType.isDeleted) {
+          return {
+            success: false,
+            error: 'Private fee type is not deleted'
+          };
+        }
+        
+        // Check for name conflicts
+        const existingFeeType = await db.select()
+          .from(feeTypes)
+          .where(and(
+            eq(feeTypes.name, feeType.name),
+            eq(feeTypes.organizationId, feeType.organizationId),
+            eq(feeTypes.isDeleted, false)
+          ))
+          .limit(1);
+          
+        if (existingFeeType.length > 0) {
+          return {
+            success: false,
+            error: 'A fee type with this name already exists in the organization'
+          };
+        }
+      }
+
+      // For global fee types, we need organizationId to add them back to enabled list
+      if (!feeType.isPrivate && !organizationId) {
+        return {
+          success: false,
+          error: 'Organization ID is required to restore global fee type'
+        };
+      }
+
+      // Use transaction to restore fee type and add to enabled list
+      const result = await db.transaction(async (tx) => {
+        let restoredFeeType = feeType;
+        
+        // Step 1: For private fee types, restore the fee type (set isDeleted = false)
+        if (feeType.isPrivate && feeType.organizationId && feeType.isDeleted) {
+          const restored = await tx.update(feeTypes)
+            .set({ 
+              isDeleted: false,
+              deletedAt: null,
+              updatedAt: sql`CURRENT_TIMESTAMP`
+            })
+            .where(eq(feeTypes.id, id))
+            .returning();
+
+          console.log('Private fee type restored:', restored[0]);
+          restoredFeeType = restored[0];
+        }
+
+        // Step 2: Add fee type back to organization's enabled list
+        const targetOrgId = organizationId || feeType.organizationId;
+        if (targetOrgId) {
+          const orgResult = await tx.select({ enabledFeetypes: organizations.enabledFeetypes })
+            .from(organizations)
+            .where(eq(organizations.id, targetOrgId))
+            .limit(1);
+
+          if (orgResult && orgResult[0]) {
+            const currentEnabled = orgResult[0].enabledFeetypes || [];
+            
+            // Only add if not already in enabled list
+            if (!currentEnabled.includes(id)) {
+              const newEnabled = [...currentEnabled, id];
+              
+              await tx.update(organizations)
+                .set({ enabledFeetypes: newEnabled })
+                .where(eq(organizations.id, targetOrgId));
+                
+              console.log('Added fee type to enabled list for organization:', targetOrgId);
+            } else {
+              console.log('Fee type already in enabled list');
+            }
+          }
+        }
+
+        return restoredFeeType;
+      });
+
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error: any) {
+      console.error('Error in restore (fee types):', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to restore fee type'
+      };
     }
   }
 

@@ -8,7 +8,7 @@ import {
   organizations, 
   users, 
   feeInvoices,
-  grades,
+  classes,
   enrollments,
   attendance,
   sections
@@ -89,6 +89,10 @@ export class OrganizationStatisticsService {
 
       const org = organization[0];
 
+      if(!org?.establishedDate) {
+        return { success: false, error: 'Organization established date not found' };
+      }
+
       // Get branches count
       const totalBranches = await db
         .select({ count: count() })
@@ -110,7 +114,7 @@ export class OrganizationStatisticsService {
         db.select({ count: count() }).from(staff).where(and(eq(staff.organizationId, organizationId), eq(staff.employeeType, 'STAFF'))),
         db.select({ count: count() }).from(staff).where(and(eq(staff.organizationId, organizationId), eq(staff.employeeType, 'TEACHER'))),
         db.select({ count: count() }).from(departments).where(eq(departments.organizationId, organizationId)),
-        db.select({ count: count() }).from(grades).innerJoin(branches, eq(grades.branchId, branches.id)).where(eq(branches.organizationId, organizationId)),
+        db.select({ count: count() }).from(classes).innerJoin(branches, eq(classes.branchId, branches.id)).where(eq(branches.organizationId, organizationId)),
         db.select({ count: count() }).from(subjects).where(eq(subjects.organizationId, organizationId)),
         db.select({ count: count() }).from(users).where(eq(users.organizationId, organizationId)),
         db.select({ count: count() }).from(branches).where(and(eq(branches.organizationId, organizationId), eq(branches.status, 'ACTIVE')))
@@ -150,10 +154,10 @@ export class OrganizationStatisticsService {
       const gradesPerBranch = await db
         .select({
           branchName: branches.name,
-          count: count(grades.id)
+          count: count(classes.id)
         })
-        .from(grades)
-        .leftJoin(branches, eq(grades.branchId, branches.id))
+        .from(classes)
+        .leftJoin(branches, eq(classes.branchId, branches.id))
         .where(eq(branches.organizationId, organizationId))
         .groupBy(branches.id, branches.name);
 
@@ -249,7 +253,7 @@ export class OrganizationStatisticsService {
         organization: {
           id: org.id,
           name: org.name,
-          establishedDate: org.establishedDate || undefined,
+          establishedDate: org.establishedDate,
           totalBranches: totalBranches[0]?.count || 0
         },
         overview: {

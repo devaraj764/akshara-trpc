@@ -2,25 +2,50 @@ import { z } from 'zod';
 import { router, protectedProcedure, adminProcedure, TRPCError } from '../trpc.js';
 import { OrganizationService } from '../services/organizationService.js';
 
+const organizationSetupSchema = z.object({
+  academic_years: z.array(z.any()).optional(),
+  subjects: z.array(z.any()).optional(),
+  departments: z.array(z.any()).optional(),
+  grades: z.array(z.any()).optional(),
+  fee_types: z.array(z.any()).optional(),
+  fee_items: z.array(z.any()).optional(),
+});
+
 const createOrganizationSchema = z.object({
   name: z.string().min(1),
-  type: z.string().optional(),
-  address: z.string().optional(),
-  phone: z.string().optional(),
-  email: z.string().email().optional(),
-  website: z.string().optional(),
-  description: z.string().optional(),
+  registrationNumber: z.string().optional(),
+  address: z.object({
+    addressLine1: z.string().min(1),
+    addressLine2: z.string().optional(),
+    pincode: z.string().optional(),
+    cityVillage: z.string().min(1),
+    district: z.string().min(1),
+    state: z.string().min(1),
+    country: z.string().optional(),
+  }).optional(),
+  contactEmail: z.string().email().optional(),
+  contactPhone: z.string().optional(),
+  status: z.string().optional(),
+  setup: organizationSetupSchema.optional(),
 });
 
 const updateOrganizationSchema = z.object({
   id: z.number(),
   name: z.string().min(1).optional(),
-  type: z.string().optional(),
-  address: z.string().optional(),
-  phone: z.string().optional(),
-  email: z.string().email().optional(),
-  website: z.string().optional(),
-  description: z.string().optional(),
+  registrationNumber: z.string().optional(),
+  address: z.object({
+    addressLine1: z.string().min(1),
+    addressLine2: z.string().optional(),
+    pincode: z.string().optional(),
+    cityVillage: z.string().min(1),
+    district: z.string().min(1),
+    state: z.string().min(1),
+    country: z.string().optional(),
+  }).optional(),
+  contactEmail: z.string().email().optional(),
+  contactPhone: z.string().optional(),
+  status: z.string().optional(),
+  setup: organizationSetupSchema.optional(),
 });
 
 export const organizationRouter = router({
@@ -233,14 +258,14 @@ export const organizationRouter = router({
       return result.data;
     }),
 
-  // Update enabled grades
-  updateEnabledGrades: adminProcedure
+  // Update enabled classes
+  updateEnabledClasses: adminProcedure
     .input(z.object({
       id: z.number().positive(),
-      gradeIds: z.array(z.number().positive()),
+      classIds: z.array(z.number().positive()),
     }))
     .mutation(async ({ input }) => {
-      const result = await OrganizationService.updateEnabledGrades(input.id, input.gradeIds);
+      const result = await OrganizationService.updateEnabledClasses(input.id, input.classIds);
       
       if (!result.success) {
         throw new TRPCError({
@@ -252,14 +277,14 @@ export const organizationRouter = router({
       return result.data;
     }),
 
-  // Add enabled grade
-  addEnabledGrade: adminProcedure
+  // Add enabled class
+  addEnabledClass: adminProcedure
     .input(z.object({
       id: z.number().positive(),
-      gradeId: z.number().positive(),
+      classId: z.number().positive(),
     }))
     .mutation(async ({ input }) => {
-      const result = await OrganizationService.addEnabledGrade(input.id, input.gradeId);
+      const result = await OrganizationService.addEnabledClass(input.id, input.classId);
       
       if (!result.success) {
         throw new TRPCError({
@@ -271,14 +296,14 @@ export const organizationRouter = router({
       return result.data;
     }),
 
-  // Remove enabled grade
-  removeEnabledGrade: adminProcedure
+  // Remove enabled class
+  removeEnabledClass: adminProcedure
     .input(z.object({
       id: z.number().positive(),
-      gradeId: z.number().positive(),
+      classId: z.number().positive(),
     }))
     .mutation(async ({ input }) => {
-      const result = await OrganizationService.removeEnabledGrade(input.id, input.gradeId);
+      const result = await OrganizationService.removeEnabledClass(input.id, input.classId);
       
       if (!result.success) {
         throw new TRPCError({

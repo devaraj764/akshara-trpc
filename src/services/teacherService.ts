@@ -1,119 +1,161 @@
-import { eq, and } from 'drizzle-orm';
-import db from '../db/index.js';
-import { staff, branches, organizations } from '../db/schema.js';
-import { ServiceResponse } from '../types.db.js';
+import { StaffService } from './staffService.js';
+import type { ServiceResponse } from '../types.db.js';
 
+/**
+ * Teacher Service - Wraps StaffService for teacher-specific operations
+ * Teachers are essentially staff members with employeeType = 'TEACHER'
+ */
 export class TeacherService {
-  static async getById(id: number): Promise<ServiceResponse<any>> {
+  /**
+   * Get all teachers for an organization or branch
+   */
+  static async getAllTeachers(
+    organizationId: number,
+    branchId?: number,
+    includeDeleted: boolean = false
+  ): Promise<ServiceResponse<any[]>> {
     try {
-      const result = await db.select({
-        id: staff.id,
-        userId: staff.userId,
-        organizationId: staff.organizationId,
-        branchId: staff.branchId,
-        employeeNumber: staff.employeeNumber,
-        firstName: staff.firstName,
-        lastName: staff.lastName,
-        phone: staff.phone,
-        email: staff.email,
-        address: staff.address,
-        dob: staff.dob,
-        gender: staff.gender,
-        hireDate: staff.hireDate,
-        isActive: staff.isActive,
-        createdAt: staff.createdAt,
-        branchName: branches.name,
-        organizationName: organizations.name,
-      })
-      .from(staff)
-      .leftJoin(branches, eq(staff.branchId, branches.id))
-      .leftJoin(organizations, eq(staff.organizationId, organizations.id))
-      .where(and(
-        eq(staff.id, id),
-        eq(staff.isDeleted, false)
-      ))
-      .limit(1);
-
-      if (result.length === 0) {
-        return { success: false, error: 'Teacher not found' };
+      const result = await StaffService.getAllStaff(organizationId, branchId, includeDeleted);
+      
+      if (!result.success) {
+        return result;
       }
 
-      return { success: true, data: result[0] };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch teacher' };
+      // Filter only teachers
+      const teachers = result.data?.filter(staff => staff.employeeType === 'TEACHER') || [];
+      
+      return {
+        success: true,
+        data: teachers
+      };
+    } catch (error) {
+      console.error('Error fetching teachers:', error);
+      return {
+        success: false,
+        error: 'Failed to fetch teachers'
+      };
     }
   }
 
-  static async getAll(organizationId: number): Promise<ServiceResponse<any[]>> {
+  /**
+   * Get teacher by ID
+   */
+  static async getTeacherById(
+    teacherId: number,
+    userBranchId?: number
+  ): Promise<ServiceResponse<any>> {
     try {
-      const result = await db.select({
-        id: staff.id,
-        userId: staff.userId,
-        organizationId: staff.organizationId,
-        branchId: staff.branchId,
-        employeeNumber: staff.employeeNumber,
-        firstName: staff.firstName,
-        lastName: staff.lastName,
-        phone: staff.phone,
-        email: staff.email,
-        isActive: staff.isActive,
-        branchName: branches.name,
-      })
-      .from(staff)
-      .leftJoin(branches, eq(staff.branchId, branches.id))
-      .where(and(
-        eq(staff.organizationId, organizationId),
-        eq(staff.isDeleted, false)
-      ))
-      .orderBy(staff.firstName, staff.lastName);
+      const result = await StaffService.getStaffById(teacherId, userBranchId);
+      
+      if (!result.success) {
+        return result;
+      }
 
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch staff' };
+      // Ensure it's a teacher
+      if (result.data?.employeeType !== 'TEACHER') {
+        return {
+          success: false,
+          error: 'Teacher not found'
+        };
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error fetching teacher:', error);
+      return {
+        success: false,
+        error: 'Failed to fetch teacher'
+      };
     }
   }
 
-  static async getByBranch(branchId: number): Promise<ServiceResponse<any[]>> {
+  /**
+   * Create a new teacher
+   */
+  static async createTeacher(
+    teacherData: any,
+    userBranchId?: number
+  ): Promise<ServiceResponse<any>> {
     try {
-      const result = await db.select({
-        id: staff.id,
-        userId: staff.userId,
-        organizationId: staff.organizationId,
-        branchId: staff.branchId,
-        employeeNumber: staff.employeeNumber,
-        firstName: staff.firstName,
-        lastName: staff.lastName,
-        phone: staff.phone,
-        email: staff.email,
-        isActive: staff.isActive,
-      })
-      .from(staff)
-      .where(and(
-        eq(staff.branchId, branchId),
-        eq(staff.isDeleted, false),
-        eq(staff.isActive, true)
-      ))
-      .orderBy(staff.firstName, staff.lastName);
+      // Force employee type to TEACHER
+      const data = {
+        ...teacherData,
+        employeeType: 'TEACHER'
+      };
 
-      return { success: true, data: result };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch staff' };
+      return await StaffService.createStaff(data, userBranchId);
+    } catch (error) {
+      console.error('Error creating teacher:', error);
+      return {
+        success: false,
+        error: 'Failed to create teacher'
+      };
     }
   }
 
-  static async create(data: any): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+  /**
+   * Update teacher
+   */
+  static async updateTeacher(
+    teacherData: any,
+    userBranchId?: number
+  ): Promise<ServiceResponse<any>> {
+    try {
+      // Ensure we're updating a teacher
+      const existingResult = await this.getTeacherById(teacherData.id, userBranchId);
+      if (!existingResult.success) {
+        return existingResult;
+      }
+
+      return await StaffService.updateStaff(teacherData, userBranchId);
+    } catch (error) {
+      console.error('Error updating teacher:', error);
+      return {
+        success: false,
+        error: 'Failed to update teacher'
+      };
+    }
   }
 
-  static async update(id: number, data: any): Promise<ServiceResponse<any>> {
-    return { success: false, error: 'Not implemented' };
+  /**
+   * Delete teacher (soft delete)
+   */
+  static async deleteTeacher(
+    teacherId: number,
+    userBranchId?: number
+  ): Promise<ServiceResponse<void>> {
+    try {
+      // Ensure we're deleting a teacher
+      const existingResult = await this.getTeacherById(teacherId, userBranchId);
+      if (!existingResult.success) {
+        return existingResult;
+      }
+
+      return await StaffService.deleteStaff(teacherId, userBranchId);
+    } catch (error) {
+      console.error('Error deleting teacher:', error);
+      return {
+        success: false,
+        error: 'Failed to delete teacher'
+      };
+    }
   }
 
-  static async delete(id: number): Promise<ServiceResponse<void>> {
-    return { success: false, error: 'Not implemented' };
-  }
-
-  static async getBySubject(subject: string, organizationId: number): Promise<ServiceResponse<any[]>> {
-    return { success: false, error: 'Not implemented' };
+  /**
+   * Restore deleted teacher
+   */
+  static async restoreTeacher(
+    teacherId: number,
+    userBranchId?: number
+  ): Promise<ServiceResponse<any>> {
+    try {
+      return await StaffService.restoreStaff(teacherId, userBranchId);
+    } catch (error) {
+      console.error('Error restoring teacher:', error);
+      return {
+        success: false,
+        error: 'Failed to restore teacher'
+      };
+    }
   }
 }

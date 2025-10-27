@@ -359,4 +359,22 @@ export const feeTypesRouter = router({
         });
       }
     }),
+
+  // Restore fee type - Only admins can restore fee types
+  restore: adminProcedure
+    .input(z.object({
+      id: z.number().positive(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await FeeTypesService.restore(input.id, ctx.user.organizationId);
+      
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to restore fee type',
+        });
+      }
+      
+      return result.data;
+    }),
 });

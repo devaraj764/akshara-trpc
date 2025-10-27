@@ -160,10 +160,7 @@ export const subjectRouter = router({
       id: z.number().positive(),
     }))
     .mutation(async ({ input, ctx }) => {
-      // Pass user's branch ID for branch admin restrictions
-      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
-      
-      const result = await SubjectService.restore(input.id, userBranchId);
+      const result = await SubjectService.restore(input.id, ctx.user.organizationId);
       
       if (!result.success) {
         throw new TRPCError({

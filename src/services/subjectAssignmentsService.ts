@@ -1,13 +1,14 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import db from '../db/index.js';
-import { 
+import {
   subjectAssignments,
   subjects,
   sections,
   staff,
   users,
-  grades,
-  branches
+  classes,
+  branches,
+  personDetails
 } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
@@ -70,6 +71,10 @@ export class SubjectAssignmentsService {
         whereConditions.push(eq(sections.branchId, options.branchId));
       }
 
+      // Filter out deleted records
+      whereConditions.push(eq(sections.isDeleted, false));
+      whereConditions.push(eq(classes.isDeleted, false));
+
       const result = await db.select({
         id: subjectAssignments.id,
         subjectId: subjectAssignments.subjectId,
@@ -86,11 +91,11 @@ export class SubjectAssignmentsService {
         sectionName: sections.name,
         sectionCapacity: sections.capacity,
         // Grade info
-        gradeName: grades.name,
-        gradeDisplayName: grades.displayName,
+        gradeName: classes.name,
+        gradeDisplayName: classes.displayName,
         // Staff info
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
         staffEmployeeNumber: staff.employeeNumber,
         staffPosition: staff.position,
         // User info for staff
@@ -100,8 +105,9 @@ export class SubjectAssignmentsService {
         .from(subjectAssignments)
         .leftJoin(subjects, eq(subjectAssignments.subjectId, subjects.id))
         .leftJoin(sections, eq(subjectAssignments.sectionId, sections.id))
-        .leftJoin(grades, eq(sections.gradeId, grades.id))
+        .leftJoin(classes, eq(sections.classId, classes.id))
         .leftJoin(staff, eq(subjectAssignments.staffId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .leftJoin(users, eq(staff.userId, users.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
         .orderBy(desc(subjectAssignments.createdAt));
@@ -130,11 +136,11 @@ export class SubjectAssignmentsService {
         sectionName: sections.name,
         sectionCapacity: sections.capacity,
         // Grade info
-        gradeName: grades.name,
-        gradeDisplayName: grades.displayName,
+        gradeName: classes.name,
+        gradeDisplayName: classes.displayName,
         // Staff info
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
         staffEmployeeNumber: staff.employeeNumber,
         staffPosition: staff.position,
         // User info for staff
@@ -144,10 +150,15 @@ export class SubjectAssignmentsService {
         .from(subjectAssignments)
         .leftJoin(subjects, eq(subjectAssignments.subjectId, subjects.id))
         .leftJoin(sections, eq(subjectAssignments.sectionId, sections.id))
-        .leftJoin(grades, eq(sections.gradeId, grades.id))
+        .leftJoin(classes, eq(sections.classId, classes.id))
         .leftJoin(staff, eq(subjectAssignments.staffId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .leftJoin(users, eq(staff.userId, users.id))
-        .where(eq(subjectAssignments.id, id))
+        .where(and(
+          eq(subjectAssignments.id, id),
+          eq(sections.isDeleted, false),
+          eq(classes.isDeleted, false)
+        ))
         .limit(1);
 
       if (result.length === 0) {
@@ -233,14 +244,14 @@ export class SubjectAssignmentsService {
   static async bulkAssignToSection(sectionId: number, assignments: { subjectId: number; staffId: number }[]): Promise<ServiceResponse<any[]>> {
     try {
       const results = [];
-      
+
       for (const assignment of assignments) {
         const result = await this.create({
           sectionId,
           subjectId: assignment.subjectId,
           staffId: assignment.staffId
         });
-        
+
         if (result.success) {
           results.push(result.data);
         } else {
@@ -259,15 +270,18 @@ export class SubjectAssignmentsService {
   static async getStaffWorkload(branchId?: number): Promise<ServiceResponse<any[]>> {
     try {
       const whereConditions = [];
-      
+
       if (branchId) {
         whereConditions.push(eq(sections.branchId, branchId));
       }
 
+      // Filter out deleted records
+      whereConditions.push(eq(sections.isDeleted, false));
+
       const result = await db.select({
         staffId: subjectAssignments.staffId,
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
         staffDisplayName: users.displayName,
         staffEmployeeNumber: staff.employeeNumber,
         assignmentCount: sql<number>`count(${subjectAssignments.id})`,
@@ -276,14 +290,15 @@ export class SubjectAssignmentsService {
       })
         .from(subjectAssignments)
         .leftJoin(staff, eq(subjectAssignments.staffId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .leftJoin(users, eq(staff.userId, users.id))
         .leftJoin(sections, eq(subjectAssignments.sectionId, sections.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
         .groupBy(
-          subjectAssignments.staffId, 
-          staff.firstName, 
-          staff.lastName, 
-          users.displayName, 
+          subjectAssignments.staffId,
+          personDetails.firstName,
+          personDetails.lastName,
+          users.displayName,
           staff.employeeNumber
         )
         .orderBy(desc(sql`count(${subjectAssignments.id})`));

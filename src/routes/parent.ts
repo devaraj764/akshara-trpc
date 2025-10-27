@@ -2,13 +2,24 @@ import { z } from 'zod';
 import { router, protectedProcedure, branchAdminProcedure, TRPCError } from '../trpc.js';
 import { CreateParentData, ParentService, ParentSearchFilters, PaginationOptions } from '../services/parentService.js';
 
+const addressSchema = z.object({
+  addressLine1: z.string().min(1, "Address line 1 is required"),
+  addressLine2: z.string().optional(),
+  pincode: z.string().optional(),
+  cityVillage: z.string().min(1, "City/Village is required"),
+  district: z.string().min(1, "District is required"),
+  state: z.string().min(1, "State is required"),
+  country: z.string().optional(),
+});
+
 const createParentSchema = z.object({
   studentId: z.number(),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().optional(),
-  phone: z.string().min(1, "Phone number is required"),
+  phone: z.string().min(10, "Phone number must be 10 digits").regex(/^[0-9]{10}$/, "Phone number must contain only digits"),
   email: z.union([z.string().email(), z.literal(''), z.undefined()]).optional(),
-  address: z.string().optional(),
+  address: addressSchema.optional(),
+  addressId: z.number().optional(),
   occupation: z.string().optional(),
   companyName: z.string().optional(),
   annualIncome: z.number().optional(),
@@ -23,9 +34,10 @@ const updateParentSchema = z.object({
   id: z.number(),
   firstName: z.string().min(1, "First name is required").optional(),
   lastName: z.string().optional(),
-  phone: z.string().min(1, "Phone number is required").optional(),
+  phone: z.string().min(10, "Phone number must be 10 digits").regex(/^[0-9]{10}$/, "Phone number must contain only digits").optional(),
   email: z.union([z.string().email(), z.literal(''), z.undefined()]).optional(),
-  address: z.string().optional(),
+  address: addressSchema.optional(),
+  addressId: z.number().optional(),
   occupation: z.string().optional(),
   companyName: z.string().optional(),
   annualIncome: z.number().optional(),
@@ -43,6 +55,34 @@ const linkParentSchema = z.object({
 });
 
 export const parentRouter = router({
+  // Check duplicate contact information
+  checkDuplicateContact: protectedProcedure
+    .input(z.object({
+      phone: z.string().min(10, "Phone number must be 10 digits").regex(/^[0-9]{10}$/, "Phone number must contain only digits"),
+      email: z.string().email().optional(),
+      organizationId: z.number().optional(),
+      excludeParentId: z.number().optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      const result = await ParentService.checkDuplicateContact(
+        input.phone,
+        input.email,
+        input.organizationId || ctx.user.organizationId!,
+        input.excludeParentId
+      );
+      
+      if (!result.success) {
+        return {
+          available: false,
+          error: result.error,
+          field: result.data?.field,
+          existing: result.data?.existing
+        };
+      }
+      
+      return { available: true };
+    }),
+
   // Enhanced search parents
   searchParents: protectedProcedure
     .input(z.object({
@@ -127,7 +167,7 @@ export const parentRouter = router({
         ...parentData,
         organizationId: ctx.user.organizationId!,
         branchId: ctx.user.branchId!,
-        phone: parentData.phone.trim()        
+        phone: parentData.phone.replace(/\D/g, '') // Store only digits        
       };
 
       const linkData = {

@@ -1,149 +1,136 @@
 import { z } from 'zod';
-import { router, protectedProcedure, teacherProcedure, TRPCError } from '../trpc.js';
-import { TeacherService } from '../services/teacherService.js';
+import { router, branchAdminProcedure, adminProcedure } from '../trpc.js';
+import { TRPCError } from '@trpc/server';
+import { StaffService } from '../services/staffService.js';
 
-const createTeacherSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  email: z.string().email(),
-  phone: z.string().optional(),
-  dateOfBirth: z.string(),
-  address: z.string().optional(),
-  subject: z.string().optional(),
-  qualification: z.string().optional(),
-  experience: z.number().optional(),
-  salary: z.number().optional(),
-  organizationId: z.number(),
-});
-
-const updateTeacherSchema = z.object({
-  id: z.number(),
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  dateOfBirth: z.string().optional(),
-  address: z.string().optional(),
-  subject: z.string().optional(),
-  qualification: z.string().optional(),
-  experience: z.number().optional(),
-  salary: z.number().optional(),
-});
-
+// Teacher router - essentially wraps staff functionality for teacher employee type
 export const teacherRouter = router({
-  getById: protectedProcedure
+  // Get all teachers for a branch or organization
+  getAll: branchAdminProcedure
     .input(z.object({
-      id: z.number(),
+      branchId: z.number().positive().optional(),
+      includeDeleted: z.boolean().default(false)
     }))
-    .query(async ({ input }) => {
-      const result = await TeacherService.getById(input.id);
-      
-      if (!result.success) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: result.error || 'Teacher not found',
-        });
-      }
-      
-      return result.data;
-    }),
+    .query(async ({ input, ctx }) => {
+      try {
+        const userBranchId = ctx.user.role === 'ADMIN' ? input.branchId : ctx.user.branchId;
+        
+        if (!userBranchId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Branch ID is required'
+          });
+        }
 
-  getAll: teacherProcedure
-    .input(z.object({
-      organizationId: z.number(),
-    }))
-    .query(async ({ input }) => {
-      const result = await TeacherService.getAll(input.organizationId);
-      
-      if (!result.success) {
+        const result = await StaffService.getAllStaff(
+          ctx.user.organizationId,
+          userBranchId,
+          input.includeDeleted
+        );
+
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: result.error || 'Failed to fetch teachers'
+          });
+        }
+
+        // Filter only teachers
+        const teachers = result.data?.filter(staff => staff.employeeType === 'TEACHER') || [];
+        
+        return teachers;
+      } catch (error) {
+        console.error('Error fetching teachers:', error);
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: result.error || 'Failed to fetch teachers',
+          message: 'Failed to fetch teachers'
         });
       }
-      
-      return result.data;
     }),
 
-  getByBranch: protectedProcedure
+  // Get teacher by ID
+  getById: branchAdminProcedure
     .input(z.object({
-      branchId: z.number(),
+      id: z.number().positive()
     }))
-    .query(async ({ input }) => {
-      const result = await TeacherService.getByBranch(input.branchId);
-      
-      if (!result.success) {
+    .query(async ({ input, ctx }) => {
+      try {
+        const result = await StaffService.getStaffById(input.id, ctx.user.branchId);
+        
+        if (!result.success) {
+          throw new TRPCError({
+            code: result.error?.includes('not found') ? 'NOT_FOUND' : 'INTERNAL_SERVER_ERROR',
+            message: result.error || 'Failed to fetch teacher'
+          });
+        }
+
+        // Ensure it's a teacher
+        if (result.data?.employeeType !== 'TEACHER') {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Teacher not found'
+          });
+        }
+
+        return result.data;
+      } catch (error) {
+        console.error('Error fetching teacher:', error);
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: result.error || 'Failed to fetch teachers',
+          message: 'Failed to fetch teacher'
         });
       }
-      
-      return result.data;
     }),
 
-  create: teacherProcedure
-    .input(createTeacherSchema)
-    .mutation(async ({ input }) => {
-      const result = await TeacherService.create(input);
-      
-      if (!result.success) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: result.error || 'Failed to create teacher',
-        });
-      }
-      
-      return result.data;
-    }),
-
-  update: teacherProcedure
-    .input(updateTeacherSchema)
-    .mutation(async ({ input }) => {
-      const result = await TeacherService.update(input.id, input);
-      
-      if (!result.success) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: result.error || 'Failed to update teacher',
-        });
-      }
-      
-      return result.data;
-    }),
-
-  delete: teacherProcedure
+  // Create teacher (using staff service with TEACHER employee type)
+  create: branchAdminProcedure
     .input(z.object({
-      id: z.number(),
+      userId: z.number().positive().optional(),
+      organizationId: z.number().positive(),
+      branchId: z.number().positive(),
+      employeeNumber: z.string().max(128).optional(),
+      firstName: z.string().min(1, 'First name is required').max(255),
+      lastName: z.string().max(255).optional(),
+      phone: z.string().min(1, 'Phone number is required').max(32),
+      email: z.string().email('Valid email is required').min(1, 'Email is required').max(255),
+      dob: z.string().optional(),
+      gender: z.string().max(32).optional(),
+      position: z.string().max(255).optional(),
+      hireDate: z.string().optional(),
+      departmentId: z.number().positive().optional(),
+      meta: z.any().optional(), // For teacher qualifications
+      createUser: z.boolean().optional(),
+      userEmail: z.string().email().optional(),
+      userDisplayName: z.string().optional(),
+      userPhone: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      const result = await TeacherService.delete(input.id);
-      
-      if (!result.success) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: result.error || 'Failed to delete teacher',
-        });
-      }
-      
-      return result.data;
-    }),
+    .mutation(async ({ input, ctx }) => {
+      try {
+        // Force employee type to TEACHER
+        const teacherData = {
+          ...input,
+          employeeType: 'TEACHER' as const
+        };
 
-  getBySubject: teacherProcedure
-    .input(z.object({
-      subject: z.string(),
-      organizationId: z.number(),
-    }))
-    .query(async ({ input }) => {
-      const result = await TeacherService.getBySubject(input.subject, input.organizationId);
-      
-      if (!result.success) {
+        const result = await StaffService.createStaff(teacherData, ctx.user.branchId);
+        
+        if (!result.success) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: result.error || 'Failed to create teacher'
+          });
+        }
+
+        return result.data;
+      } catch (error) {
+        console.error('Error creating teacher:', error);
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: result.error || 'Failed to fetch teachers',
+          message: 'Failed to create teacher'
         });
       }
-      
-      return result.data;
-    }),
+    })
 });

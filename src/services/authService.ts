@@ -3,10 +3,19 @@ import jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import db from '../db/index.js';
-import { users, userRoles, organizations, roleEnum, addresses } from '../db/schema.js';
+import { users, userRoles, organizations, branches, roleEnum, addresses } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
 // Types
+export interface OrganizationSetup {
+  academic_years?: any[];
+  subjects?: any[];
+  departments?: any[];
+  grades?: any[];
+  fee_types?: any[];
+  fee_items?: any[];
+}
+
 export interface SignUpData {
   email: string;
   password: string;
@@ -26,6 +35,7 @@ export interface SignUpData {
   organizationPhone?: string | undefined;
   organizationEmail?: string | undefined;
   branchId?: number | undefined;
+  organizationSetup?: OrganizationSetup;
 }
 
 export interface SignInData {
@@ -114,7 +124,8 @@ class AuthService {
     const refreshTokenPayload = {
       userId: user.id,
       tokenId,
-      type: 'refresh'
+      type: 'refresh',
+      lastVerified: Math.floor(now.getTime() / 1000) // Timestamp when this token was created/verified
     };
     
     const refreshToken = jwt.sign(
@@ -127,12 +138,8 @@ class AuthService {
       } as jwt.SignOptions
     );
 
-    // Store refresh token metadata
-    refreshTokenStore.set(tokenId, {
-      userId: user.id,
-      tokenId,
-      deviceInfo
-    });
+    // No need to store refresh token metadata in memory
+    // JWT token is self-contained and includes all necessary data
 
     const expiresAt = new Date(now.getTime() + this.parseExpiry(ACCESS_TOKEN_EXPIRY));
 
@@ -234,7 +241,7 @@ class AuthService {
   /**
    * Sign up with email and password (ADMIN only - creates user with roles)
    */
-  async signUp({ email, password, fullName, role = 'ADMIN', organizationName, organizationRegistrationNumber, organizationAddress, organizationPhone, organizationEmail, branchId }: SignUpData, deviceInfo?: string): Promise<ServiceResponse<AuthSession>> {
+  async signUp({ email, password, fullName, role = 'ADMIN', organizationName, organizationRegistrationNumber, organizationAddress, organizationPhone, organizationEmail, branchId, organizationSetup }: SignUpData, deviceInfo?: string): Promise<ServiceResponse<AuthSession>> {
     try {
       // Validate email format
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -272,6 +279,12 @@ class AuthService {
           addressId = addressResult[0]?.id;
         }
 
+        // Prepare meta object with setup if provided
+        const metaData: any = {};
+        if (organizationSetup) {
+          metaData.setup = organizationSetup;
+        }
+
         // Create organization
         const newOrg = await tx.insert(organizations).values({
           name: organizationName,
@@ -279,6 +292,7 @@ class AuthService {
           contactPhone: organizationPhone || null,
           contactEmail: organizationEmail || null,
           addressId: addressId || null,
+          meta: Object.keys(metaData).length > 0 ? metaData : null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }).returning();
@@ -433,6 +447,29 @@ class AuthService {
         };
       }
 
+      // For branch-level users, check if their branch is active
+      if (['BRANCH_ADMIN', 'ACCOUNTANT', 'TEACHER'].includes(userRole) && user.branchId) {
+        const branchResult = await db.select()
+          .from(branches)
+          .where(eq(branches.id, user.branchId))
+          .limit(1);
+        
+        if (branchResult.length === 0) {
+          return { 
+            success: false, 
+            error: 'Your branch could not be found. Please contact your administrator.' 
+          };
+        }
+        
+        const branch = branchResult[0];
+        if (branch.status !== 'ACTIVE') {
+          return { 
+            success: false, 
+            error: 'Your branch has been disabled. Please contact your administrator.' 
+          };
+        }
+      }
+
       // Create user object
       const userObj: User = {
         id: user.id,
@@ -477,11 +514,6 @@ class AuthService {
    */
   async refreshToken(refreshToken: string, deviceInfo?: string): Promise<ServiceResponse<TokenPair>> {
     try {
-      // Check if token is blacklisted
-      if (blacklistedTokens.has(refreshToken)) {
-        return { success: false, error: 'Invalid refresh token' };
-      }
-
       // Verify refresh token
       let decoded: any;
       try {
@@ -497,20 +529,7 @@ class AuthService {
         return { success: false, error: 'Invalid token type' };
       }
 
-      // Check if token exists in store
-      const tokenData = refreshTokenStore.get(decoded.tokenId);
-      if (!tokenData) {
-        console.log('Token not found in store:', decoded.tokenId);
-        console.log('Available tokens:', Array.from(refreshTokenStore.keys()));
-        return { success: false, error: 'Invalid refresh token' };
-      }
-      
-      if (tokenData.userId !== decoded.userId) {
-        console.log('User ID mismatch:', { tokenUserId: tokenData.userId, decodedUserId: decoded.userId });
-        return { success: false, error: 'Invalid refresh token' };
-      }
-
-      // Get user from database
+      // Get user from database to check lastVerifiedAt
       const userResult = await db.select().from(users).where(eq(users.id, decoded.userId)).limit(1);
       
       if (userResult.length === 0) {
@@ -524,6 +543,17 @@ class AuthService {
       
       if (!user.isActive || user.isDeleted) {
         return { success: false, error: 'Account is deactivated' };
+      }
+
+      // Check if token is still valid based on user's lastVerifiedAt timestamp
+      if (user.lastVerifiedAt && decoded.lastVerified) {
+        const userLastVerified = new Date(user.lastVerifiedAt).getTime() / 1000;
+        const tokenLastVerified = decoded.lastVerified;
+        
+        // If user was verified after this token was created, token is invalid
+        if (userLastVerified > tokenLastVerified) {
+          return { success: false, error: 'Invalid refresh token' };
+        }
       }
 
       // Fetch user roles from userRoles table - use same logic as sign-in
@@ -558,9 +588,17 @@ class AuthService {
       // Generate new token pair BEFORE invalidating old one (prevents race conditions)
       const newTokens = this.generateTokenPair(userObj, deviceInfo);
 
-      // Only invalidate old refresh token after successful generation of new tokens
-      refreshTokenStore.delete(decoded.tokenId);
-      blacklistedTokens.add(refreshToken);
+      // Update user's lastVerifiedAt to invalidate older tokens
+      try {
+        await db.update(users)
+          .set({ 
+            lastVerifiedAt: new Date().toISOString()
+          })
+          .where(eq(users.id, user.id));
+      } catch (error) {
+        console.error('Failed to update user lastVerifiedAt:', error);
+        // Continue anyway - token generation succeeded
+      }
 
       return {
         success: true,
@@ -577,10 +615,6 @@ class AuthService {
    */
   async verifyToken(token: string): Promise<ServiceResponse<User>> {
     try {
-      // Check if token is blacklisted
-      if (blacklistedTokens.has(token)) {
-        return { success: false, error: 'Token has been revoked' };
-      }
 
       // Verify access token
       const decoded = jwt.verify(token, JWT_ACCESS_SECRET) as any;
@@ -642,9 +676,13 @@ class AuthService {
     try {
       if (refreshToken) {
         const decoded = jwt.decode(refreshToken) as any;
-        if (decoded?.tokenId) {
-          refreshTokenStore.delete(decoded.tokenId);
-          blacklistedTokens.add(refreshToken);
+        if (decoded?.userId) {
+          // Update user's lastVerifiedAt to invalidate current tokens
+          await db.update(users)
+            .set({ 
+              lastVerifiedAt: new Date().toISOString()
+            })
+            .where(eq(users.id, decoded.userId));
         }
       }
       return { success: true };
@@ -658,12 +696,12 @@ class AuthService {
    */
   async signOutAllDevices(userId: number): Promise<ServiceResponse<void>> {
     try {
-      // Remove all refresh tokens for this user
-      for (const [tokenId, tokenData] of Array.from(refreshTokenStore.entries())) {
-        if (tokenData.userId === userId) {
-          refreshTokenStore.delete(tokenId);
-        }
-      }
+      // Update user's lastVerifiedAt to invalidate all current tokens
+      await db.update(users)
+        .set({ 
+          lastVerifiedAt: new Date().toISOString()
+        })
+        .where(eq(users.id, userId));
       return { success: true };
     } catch (err: any) {
       return { success: false, error: 'Sign out failed' };

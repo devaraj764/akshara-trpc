@@ -4,17 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { StaffService } from '../services/staffService.js';
 import { StaffSalaryService } from '../services/staffSalaryService.js';
 import { MonthlyPayslipService } from '../services/monthlyPayslipService.js';
-
-// Address schema for validation  
-const addressSchema = z.object({
-  addressLine1: z.string().min(1, 'Address line 1 is required').max(255),
-  addressLine2: z.string().max(255).optional(),
-  pincode: z.string().max(10).optional(),
-  cityVillage: z.string().min(1, 'City/Village is required').max(128),
-  district: z.string().min(1, 'District is required').max(128),
-  state: z.string().min(1, 'State is required').max(128),
-  country: z.string().max(128).optional(),
-});
+import { addressSchema } from '../schemas/address.js';
 
 // Validation schemas
 const createStaffSchema = z.object({
@@ -34,6 +24,7 @@ const createStaffSchema = z.object({
   departmentId: z.number().positive().optional(),
   employeeType: z.enum(['STAFF', 'TEACHER']).default('STAFF'),
   meta: z.any().optional(), // For teacher qualifications and other custom data
+  workingHours: z.any().optional(), // Staff working hours configuration
   // Fields for automatic user creation
   createUser: z.boolean().optional(),
   userEmail: z.string().email().optional(),
@@ -57,6 +48,7 @@ const updateStaffSchema = z.object({
   employeeType: z.enum(['STAFF', 'TEACHER']).optional(),
   isActive: z.boolean().optional(),
   meta: z.any().optional(),
+  workingHours: z.any().optional(), // Staff working hours configuration
 });
 
 const updateTeacherQualificationsSchema = z.object({
@@ -613,13 +605,90 @@ export const staffRouter = router({
       const result = await MonthlyPayslipService.getAll({
         ...input,
         branchId: branchId || undefined,
-        organizationId: ctx.user.organizationId || undefined
+        organizationId: ctx.user.organizationId!,        
       });
 
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to fetch monthly payslips',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Get monthly payslips for organization (for salary management page)
+  getMonthlyPayslipsForOrganization: branchAdminProcedure
+    .input(z.object({
+      month: z.number().min(1).max(12),
+      year: z.number().min(2020).max(2030),
+      includeStaffInfo: z.boolean().default(true),
+    }))
+    .query(async ({ input, ctx }) => {
+      // Get organization and branch restrictions
+      const organizationId = ctx.user.organizationId;
+      const branchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      if (!organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization information required',
+        });
+      }
+
+      const options: any = {
+        organizationId,
+        month: input.month,
+        year: input.year,
+        includeStaffInfo: input.includeStaffInfo
+      };
+      
+      if (branchId) {
+        options.branchId = branchId;
+      }
+
+      const result = await MonthlyPayslipService.getAll(options);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to fetch monthly payslips',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Get staff member's payslips for academic year
+  getStaffPayslipsForAcademicYear: branchAdminProcedure
+    .input(z.object({
+      employeeId: z.number().positive(),
+      employeeType: z.enum(['STAFF', 'TEACHER']),
+      academicYearId: z.number().positive().optional(), // If not provided, use current academic year
+    }))
+    .query(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      // TODO: Get academic year dates and filter payslips by that range
+      // For now, get all payslips for the employee
+      const options: any = {
+        employeeId: input.employeeId,
+        employeeType: input.employeeType,
+        includeStaffInfo: true
+      };
+      
+      if (userBranchId) {
+        options.branchId = userBranchId;
+      }
+      
+      const result = await MonthlyPayslipService.getAll(options);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to fetch staff payslips',
         });
       }
 
@@ -758,6 +827,32 @@ export const staffRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to delete payslip',
+        });
+      }
+
+      return result.data;
+    }),
+
+  // Get staff eligible for payslip generation (staff with user accounts and current salaries)
+  getEligibleForPayslips: branchAdminProcedure
+    .input(z.object({
+      month: z.number().min(1).max(12),
+      year: z.number().positive(),
+    }))
+    .query(async ({ input, ctx }) => {
+      // Pass user's branch ID for branch admin restrictions
+      const userBranchId = ctx.user.role === 'ADMIN' ? undefined : ctx.user.branchId;
+
+      const result = await StaffService.getEligibleForPayslips(
+        input.month,
+        input.year,
+        userBranchId
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to get eligible staff',
         });
       }
 

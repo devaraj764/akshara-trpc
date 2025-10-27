@@ -56,7 +56,7 @@ export const feeRouter = router({
   getFeeItems: protectedProcedure
     .input(z.object({
       academicYearId: z.number().min(1).optional(),
-      gradeId: z.number().min(1).optional(),
+      classId: z.number().min(1).optional(),
     }))
     .query(async ({ input, ctx }) => {
       const { user } = ctx;
@@ -75,7 +75,7 @@ export const feeRouter = router({
         user.organizationId, 
         branchId, 
         input.academicYearId, 
-        input.gradeId
+        input.classId
       );
       
       if (!result.success) {

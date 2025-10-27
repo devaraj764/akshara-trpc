@@ -1,6 +1,6 @@
 import { eq, and, sql, sum } from 'drizzle-orm';
 import db from '../db/index.js';
-import { feeItems, feeInvoices, feePayments, feeInvoiceItems, students, enrollments, branches, grades, sections } from '../db/schema.js';
+import { feeItems, feeInvoices, feePayments, feeInvoiceItems, students, enrollments, branches, classes, sections, personDetails } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
 export interface FeeItem {
@@ -8,11 +8,10 @@ export interface FeeItem {
   name: string;
   amountPaise: number;
   isMandatory: boolean;
-  academicYearId: number;
   branchId?: number | null;
   organizationId: number;
   feeTypeId: number;
-  enabledGrades: number[] | null;
+  enabledClasses: number[] | null;
   isDeleted: boolean;
   createdAt: string;
 }
@@ -42,21 +41,20 @@ export class FeeService {
       console.log('=== DEBUG: Getting ALL fee items from database ===');
       const allItems = await db.select().from(feeItems);
       console.log(`Total fee items in database: ${allItems.length}`);
-      
+
       allItems.forEach((item, index) => {
         console.log(`Item ${index + 1}:`, {
           id: item.id,
           name: item.name,
           organizationId: item.organizationId,
           branchId: item.branchId,
-          academicYearId: item.academicYearId,
-          enabledGrades: item.enabledGrades,
+          enabledClasses: item.enabledClasses,
           isMandatory: item.isMandatory,
           isDeleted: item.isDeleted,
           amountPaise: item.amountPaise
         });
       });
-      
+
       console.log('=== END DEBUG ===');
       return { success: true, data: allItems };
     } catch (error) {
@@ -66,37 +64,33 @@ export class FeeService {
   }
 
   // Fee Items
-  static async getFeeItems(organizationId: number, branchId?: number, academicYearId?: number, gradeId?: number): Promise<ServiceResponse<FeeItem[]>> {
+  static async getFeeItems(organizationId: number, branchId?: number, classId?: number): Promise<ServiceResponse<FeeItem[]>> {
     try {
       // Validate required parameters
       if (!organizationId || organizationId <= 0) {
         return { success: false, error: 'Valid organization ID is required' };
       }
-      
+
       const conditions = [
         eq(feeItems.organizationId, organizationId),
         eq(feeItems.isDeleted, false)
       ];
-      
+
       if (branchId) {
         conditions.push(eq(feeItems.branchId, branchId));
       }
-      
-      if (academicYearId) {
-        conditions.push(eq(feeItems.academicYearId, academicYearId));
-      }
 
       let items = await db.select().from(feeItems).where(and(...conditions));
-      
-      // Filter by grade if specified (check if gradeId is in enabledGrades array or if enabledGrades is null/empty)
-      if (gradeId) {
+
+      // Filter by class if specified (check if classId is in enabledClasses array or if enabledClasses is null/empty)
+      if (classId) {
         items = items.filter(item => {
-          return !item.enabledGrades || 
-                 item.enabledGrades.length === 0 || 
-                 item.enabledGrades.includes(gradeId);
+          return !item.enabledClasses ||
+            item.enabledClasses.length === 0 ||
+            item.enabledClasses.includes(classId);
         });
       }
-      
+
       return { success: true, data: items as FeeItem[] };
     } catch (error) {
       console.error('Error in getFeeItems:', error);
@@ -104,15 +98,14 @@ export class FeeService {
     }
   }
 
-  static async createFeeItem(data: { 
-    name: string; 
-    amountPaise: number; 
-    organizationId: number; 
-    academicYearId: number; 
+  static async createFeeItem(data: {
+    name: string;
+    amountPaise: number;
+    organizationId: number;
     feeTypeId: number;
     isMandatory?: boolean;
     branchId?: number;
-    enabledGrades?: number[];
+    enabledClasses?: number[];
   }): Promise<ServiceResponse<FeeItem>> {
     try {
       const [feeItem] = await db.insert(feeItems).values(data).returning();
@@ -122,11 +115,11 @@ export class FeeService {
     }
   }
 
-  static async updateFeeItem(id: number, data: { 
-    name?: string; 
-    amountPaise?: number; 
+  static async updateFeeItem(id: number, data: {
+    name?: string;
+    amountPaise?: number;
     isMandatory?: boolean;
-    enabledGrades?: number[];
+    enabledClasses?: number[];
   }): Promise<ServiceResponse<FeeItem>> {
     try {
       const [feeItem] = await db.update(feeItems).set(data).where(eq(feeItems.id, id)).returning();
@@ -149,7 +142,7 @@ export class FeeService {
   static async getInvoicesByStudent(studentId: number, status?: string): Promise<ServiceResponse<any[]>> {
     try {
       const conditions = [eq(feeInvoices.studentId, studentId)];
-      
+
       if (status) {
         conditions.push(eq(feeInvoices.status, status as any));
       }
@@ -227,7 +220,7 @@ export class FeeService {
           feeInvoices.discount,
           feeInvoices.tax
         );
-        
+
       if (!invoiceWithPayment) {
         return { success: false, error: 'Invoice not found' };
       }
@@ -261,7 +254,7 @@ export class FeeService {
   static async getAllInvoices(branchId: number, status?: string): Promise<ServiceResponse<FeeInvoice[]>> {
     try {
       const conditions = [eq(feeInvoices.branchId, branchId)];
-      
+
       if (status) {
         conditions.push(eq(feeInvoices.status, status as any));
       }
@@ -327,10 +320,10 @@ export class FeeService {
         createdAt: sql`CURRENT_TIMESTAMP`
       };
       const [payment] = await db.insert(feePayments).values(paymentData).returning();
-      
+
       // Get the invoice to check total amount and current status
       const [invoice] = await db.select().from(feeInvoices).where(eq(feeInvoices.id, data.feeInvoiceId));
-      
+
       if (!invoice) {
         throw new Error('Invoice not found');
       }
@@ -407,8 +400,8 @@ export class FeeService {
       console.log('🧾 INVOICE UPDATED:', JSON.stringify(invoiceChanges, null, 2));
 
       // Return detailed payment result with invoice changes
-      return { 
-        success: true, 
+      return {
+        success: true,
         data: {
           payment,
           invoiceChanges
@@ -576,12 +569,11 @@ export class FeeService {
   static async getStudentFeeBalances(params: {
     organizationId: number;
     branchId?: number;
-    academicYearId?: number;
     status?: 'paid' | 'partial' | 'overdue' | 'all';
     searchTerm?: string;
   }): Promise<ServiceResponse<any[]>> {
     try {
-      const { organizationId, branchId, academicYearId, status, searchTerm } = params;
+      const { organizationId, branchId, status, searchTerm } = params;
 
       // Build conditions array
       const conditions = [
@@ -593,40 +585,37 @@ export class FeeService {
         conditions.push(eq(students.branchId, branchId));
       }
 
-      if (academicYearId) {
-        conditions.push(eq(enrollments.academicYearId, academicYearId));
-      }
-
       // Base query to get students with their fee invoices and payments
       const results = await db
         .select({
           studentId: students.id,
-          studentName: sql<string>`CONCAT(${students.firstName}, ' ', COALESCE(${students.lastName}, ''))`.as('studentName'),
+          studentName: sql<string>`CONCAT(${personDetails.firstName}, ' ', COALESCE(${personDetails.lastName}, ''))`.as('studentName'),
           admissionNumber: students.admissionNumber,
           branchId: students.branchId,
           branchName: branches.name,
-          gradeName: grades.name,
+          gradeName: classes.name,
           sectionName: sections.name,
           totalFees: sql<number>`COALESCE(SUM(${feeInvoices.totalAmountPaise}), 0)`.as('totalFees'),
           paidAmount: sql<number>`COALESCE(SUM(${feePayments.amountPaise}), 0)`.as('paidAmount'),
           lastPaymentDate: sql<string>`MAX(${feePayments.paidAt})`.as('lastPaymentDate'),
         })
         .from(students)
+        .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
         .leftJoin(enrollments, eq(students.id, enrollments.studentId))
         .leftJoin(branches, eq(students.branchId, branches.id))
-        .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+        .leftJoin(classes, eq(enrollments.classId, classes.id))
         .leftJoin(sections, eq(enrollments.sectionId, sections.id))
         .leftJoin(feeInvoices, eq(students.id, feeInvoices.studentId))
         .leftJoin(feePayments, eq(feeInvoices.id, feePayments.feeInvoiceId))
         .where(and(...conditions))
         .groupBy(
           students.id,
-          students.firstName,
-          students.lastName,
+          personDetails.firstName,
+          personDetails.lastName,
           students.admissionNumber,
           students.branchId,
           branches.name,
-          grades.name,
+          classes.name,
           sections.name
         );
 
@@ -635,14 +624,14 @@ export class FeeService {
         const totalFees = row.totalFees || 0;
         const paidAmount = row.paidAmount || 0;
         const balanceAmount = totalFees - paidAmount;
-        
+
         let feeStatus: 'paid' | 'partial' | 'overdue' = 'paid';
         if (balanceAmount > 0) {
           // Check if payment is overdue (simplified logic - could be enhanced)
           const lastPayment = row.lastPaymentDate ? new Date(row.lastPaymentDate) : null;
           const thirtyDaysAgo = new Date();
           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          
+
           if (!lastPayment || lastPayment < thirtyDaysAgo) {
             feeStatus = 'overdue';
           } else {
@@ -685,9 +674,9 @@ export class FeeService {
       return { success: true, data: filteredResults };
     } catch (error) {
       console.error('Error in getStudentFeeBalances:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch student fee balances' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch student fee balances'
       };
     }
   }
@@ -696,7 +685,6 @@ export class FeeService {
   static async getFeeBalanceSummary(params: {
     organizationId: number;
     branchId?: number;
-    academicYearId?: number;
   }): Promise<ServiceResponse<{
     totalOutstanding: number;
     totalCollected: number;
@@ -705,7 +693,7 @@ export class FeeService {
     collectionRate: number;
   }>> {
     try {
-      const { organizationId, branchId, academicYearId } = params;
+      const { organizationId, branchId } = params;
 
       // Build conditions array
       const conditions = [
@@ -717,39 +705,17 @@ export class FeeService {
         conditions.push(eq(students.branchId, branchId));
       }
 
-      if (academicYearId) {
-        conditions.push(eq(enrollments.academicYearId, academicYearId));
-      }
-
       // Get summary statistics
       const [summary] = await db
         .select({
           totalFees: sql<number>`COALESCE(SUM(${feeInvoices.totalAmountPaise}), 0)`.as('totalFees'),
           totalPaid: sql<number>`COALESCE(SUM(${feePayments.amountPaise}), 0)`.as('totalPaid'),
           studentCount: sql<number>`COUNT(DISTINCT ${students.id})`.as('studentCount'),
-          overdueCount: sql<number>`COUNT(DISTINCT CASE 
-            WHEN ${feeInvoices.totalAmountPaise} > COALESCE(subquery.paid_amount, 0) 
-            AND (subquery.last_payment IS NULL OR subquery.last_payment < NOW() - INTERVAL '30 days')
-            THEN ${students.id} 
-            ELSE NULL 
-          END)`.as('overdueCount'),
         })
         .from(students)
         .leftJoin(enrollments, eq(students.id, enrollments.studentId))
         .leftJoin(feeInvoices, eq(students.id, feeInvoices.studentId))
         .leftJoin(feePayments, eq(feeInvoices.id, feePayments.feeInvoiceId))
-        .leftJoin(
-          sql`(
-            SELECT 
-              fi.student_id,
-              SUM(fp.amount_paise) as paid_amount,
-              MAX(fp.paid_at) as last_payment
-            FROM fee_invoices fi
-            LEFT JOIN fee_payments fp ON fi.id = fp.fee_invoice_id
-            GROUP BY fi.student_id
-          ) subquery`,
-          sql`${students.id} = subquery.student_id`
-        )
         .where(and(...conditions));
 
       const totalFees = summary?.totalFees || 0;
@@ -757,21 +723,40 @@ export class FeeService {
       const totalOutstanding = totalFees - totalPaid;
       const collectionRate = totalFees > 0 ? (totalPaid / totalFees) * 100 : 0;
 
+      // For simplicity, calculate overdue students as students with outstanding balance
+      // This can be enhanced later with more sophisticated overdue logic
+      const [overdueResult] = await db
+        .select({
+          overdueCount: sql<number>`COUNT(DISTINCT ${students.id})`.as('overdueCount'),
+        })
+        .from(students)
+        .leftJoin(enrollments, eq(students.id, enrollments.studentId))
+        .leftJoin(feeInvoices, eq(students.id, feeInvoices.studentId))
+        .leftJoin(feePayments, eq(feeInvoices.id, feePayments.feeInvoiceId))
+        .where(and(
+          ...conditions,
+          sql`${feeInvoices.totalAmountPaise} > COALESCE((
+            SELECT SUM(fp.amount_paise) 
+            FROM fee_payments fp 
+            WHERE fp.fee_invoice_id = ${feeInvoices.id}
+          ), 0)`
+        ));
+
       return {
         success: true,
         data: {
           totalOutstanding: Math.round(totalOutstanding / 100), // Convert paise to rupees
           totalCollected: Math.round(totalPaid / 100), // Convert paise to rupees
-          overdueStudents: summary?.overdueCount || 0,
+          overdueStudents: overdueResult?.overdueCount || 0,
           totalStudents: summary?.studentCount || 0,
           collectionRate: Math.round(collectionRate * 100) / 100, // Round to 2 decimal places
         }
       };
     } catch (error) {
       console.error('Error in getFeeBalanceSummary:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to fetch fee balance summary' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch fee balance summary'
       };
     }
   }

@@ -7,11 +7,12 @@ export interface Branch {
   id: number;
   name: string;
   code?: string;
-  address?: string;
+  addressId?: number;
   contactPhone?: string;
   organizationId: number;
   timezone: string;
-  settings?: any;
+  status: string;
+  meta?: any;
   createdAt: string;
   updatedAt: string;
 }
@@ -31,7 +32,7 @@ export interface CreateBranchData {
   contactPhone?: string | undefined;
   organizationId: number;
   timezone?: string | undefined;
-  settings?: any;
+  meta?: any;
 }
 
 export interface UpdateBranchData {
@@ -48,7 +49,8 @@ export interface UpdateBranchData {
   };
   contactPhone?: string | undefined;
   timezone?: string | undefined;
-  settings?: any;
+  status?: string | undefined;
+  meta?: any;
 }
 
 export interface BranchFilters {
@@ -59,13 +61,46 @@ export interface BranchFilters {
 export class BranchesService {
   static async getById(id: number): Promise<ServiceResponse<Branch>> {
     try {
-      const result = await db.select().from(branches).where(eq(branches.id, id)).limit(1);
+      const result = await db.select({
+        id: branches.id,
+        name: branches.name,
+        code: branches.code,
+        addressId: branches.addressId,
+        contactPhone: branches.contactPhone,
+        organizationId: branches.organizationId,
+        timezone: branches.timezone,
+        status: branches.status,
+        meta: branches.meta,
+        createdAt: branches.createdAt,
+        updatedAt: branches.updatedAt,
+        // Address data
+        address: {
+          addressLine1: addresses.addressLine1,
+          addressLine2: addresses.addressLine2,
+          pincode: addresses.pincode,
+          cityVillage: addresses.cityVillage,
+          district: addresses.district,
+          state: addresses.state,
+          country: addresses.country,
+        }
+      })
+      .from(branches)
+      .leftJoin(addresses, eq(branches.addressId, addresses.id))
+      .where(eq(branches.id, id))
+      .limit(1);
       
       if (result.length === 0) {
         return { success: false, error: 'Branch not found' };
       }
 
-      return { success: true, data: result[0] as Branch };
+      const branch = result[0];
+      // Clean up address if no addressId
+      const cleanedBranch = {
+        ...branch,
+        address: branch.addressId ? branch.address : undefined
+      };
+
+      return { success: true, data: cleanedBranch as Branch };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to fetch branch' };
     }
@@ -84,20 +119,54 @@ export class BranchesService {
         conditions.push(
           or(
             like(branches.name, searchTerm),
-            like(branches.code, searchTerm),
-            like(branches.address, searchTerm)
+            like(branches.code, searchTerm)
           )
         );
       }
       
       let result;
+      const selectFields = {
+        id: branches.id,
+        name: branches.name,
+        code: branches.code,
+        addressId: branches.addressId,
+        contactPhone: branches.contactPhone,
+        organizationId: branches.organizationId,
+        timezone: branches.timezone,
+        status: branches.status,
+        meta: branches.meta,
+        createdAt: branches.createdAt,
+        updatedAt: branches.updatedAt,
+        // Address data
+        address: {
+          addressLine1: addresses.addressLine1,
+          addressLine2: addresses.addressLine2,
+          pincode: addresses.pincode,
+          cityVillage: addresses.cityVillage,
+          district: addresses.district,
+          state: addresses.state,
+          country: addresses.country,
+        }
+      };
+
       if (conditions.length > 0) {
-        result = await db.select().from(branches).where(and(...conditions));
+        result = await db.select(selectFields)
+          .from(branches)
+          .leftJoin(addresses, eq(branches.addressId, addresses.id))
+          .where(and(...conditions));
       } else {
-        result = await db.select().from(branches);
+        result = await db.select(selectFields)
+          .from(branches)
+          .leftJoin(addresses, eq(branches.addressId, addresses.id));
       }
       
-      return { success: true, data: result as Branch[] };
+      // Clean up addresses for branches without addressId
+      const cleanedResults = result.map(branch => ({
+        ...branch,
+        address: branch.addressId ? branch.address : undefined
+      }));
+      
+      return { success: true, data: cleanedResults as Branch[] };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to fetch branches' };
     }
@@ -105,8 +174,42 @@ export class BranchesService {
 
   static async getByOrganization(organizationId: number): Promise<ServiceResponse<Branch[]>> {
     try {
-      const result = await db.select().from(branches).where(eq(branches.organizationId, organizationId));
-      return { success: true, data: result as Branch[] };
+      const selectFields = {
+        id: branches.id,
+        name: branches.name,
+        code: branches.code,
+        addressId: branches.addressId,
+        contactPhone: branches.contactPhone,
+        organizationId: branches.organizationId,
+        timezone: branches.timezone,
+        status: branches.status,
+        meta: branches.meta,
+        createdAt: branches.createdAt,
+        updatedAt: branches.updatedAt,
+        // Address data
+        address: {
+          addressLine1: addresses.addressLine1,
+          addressLine2: addresses.addressLine2,
+          pincode: addresses.pincode,
+          cityVillage: addresses.cityVillage,
+          district: addresses.district,
+          state: addresses.state,
+          country: addresses.country,
+        }
+      };
+
+      const result = await db.select(selectFields)
+        .from(branches)
+        .leftJoin(addresses, eq(branches.addressId, addresses.id))
+        .where(eq(branches.organizationId, organizationId));
+      
+      // Clean up addresses for branches without addressId
+      const cleanedResults = result.map(branch => ({
+        ...branch,
+        address: branch.addressId ? branch.address : undefined
+      }));
+      
+      return { success: true, data: cleanedResults as Branch[] };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to fetch organization branches' };
     }
@@ -155,7 +258,7 @@ export class BranchesService {
           contactPhone: data.contactPhone || null,
           organizationId: data.organizationId,
           timezone: data.timezone || 'Asia/Kolkata',
-          settings: data.settings || null,
+          meta: data.meta || null,
           addressId: addressId || null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -197,27 +300,60 @@ export class BranchesService {
         }
       }
 
-      const updateData: any = {
-        updatedAt: new Date().toISOString()
-      };
+      return await db.transaction(async (tx) => {
+        // Handle address update if provided
+        let addressId: number | undefined = existingBranch[0]?.addressId || undefined;
+        if (data.address) {
+          if (addressId) {
+            // Update existing address
+            await tx.update(addresses).set({
+              addressLine1: data.address.addressLine1,
+              addressLine2: data.address.addressLine2 || null,
+              pincode: data.address.pincode || null,
+              cityVillage: data.address.cityVillage,
+              district: data.address.district,
+              state: data.address.state,
+              country: data.address.country || 'India',
+              updatedAt: new Date().toISOString()
+            }).where(eq(addresses.id, addressId));
+          } else {
+            // Create new address
+            const addressResult = await tx.insert(addresses).values({
+              addressLine1: data.address.addressLine1,
+              addressLine2: data.address.addressLine2 || null,
+              pincode: data.address.pincode || null,
+              cityVillage: data.address.cityVillage,
+              district: data.address.district,
+              state: data.address.state,
+              country: data.address.country || 'India',
+            }).returning({ id: addresses.id });
+            addressId = addressResult[0]?.id;
+          }
+        }
 
-      if (data.name !== undefined) updateData.name = data.name;
-      if (data.code !== undefined) updateData.code = data.code;
-      if (data.address !== undefined) updateData.address = data.address;
-      if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
-      if (data.timezone !== undefined) updateData.timezone = data.timezone;
-      if (data.settings !== undefined) updateData.settings = data.settings;
+        const updateData: any = {
+          updatedAt: new Date().toISOString()
+        };
 
-      const updatedBranch = await db.update(branches)
-        .set(updateData)
-        .where(eq(branches.id, id))
-        .returning();
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.code !== undefined) updateData.code = data.code;
+        if (addressId !== undefined) updateData.addressId = addressId;
+        if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+        if (data.timezone !== undefined) updateData.timezone = data.timezone;
+        if (data.status !== undefined) updateData.status = data.status;
+        if (data.meta !== undefined) updateData.meta = data.meta;
 
-      if (updatedBranch.length === 0) {
-        return { success: false, error: 'Failed to update branch' };
-      }
+        const updatedBranch = await tx.update(branches)
+          .set(updateData)
+          .where(eq(branches.id, id))
+          .returning();
 
-      return { success: true, data: updatedBranch[0] as Branch };
+        if (updatedBranch.length === 0) {
+          throw new Error('Failed to update branch');
+        }
+
+        return { success: true, data: updatedBranch[0] as Branch };
+      });
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to update branch' };
     }

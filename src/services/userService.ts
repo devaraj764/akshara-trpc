@@ -1,7 +1,7 @@
 import { and, eq, or, like, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import db from '../db/index.js'
-import { userRoles, users, organizations, branches, addresses } from '../db/schema.js'
+import { userRoles, users, organizations, branches, addresses, staff } from '../db/schema.js'
 import type { ServiceResponse } from '../types.db.js'
 
 export type CreateUserData = {
@@ -422,12 +422,24 @@ class UserService {
             '[]'
           )
         `.as("roles"),
+
+          staff: sql`
+          json_build_object(
+            'id', ${staff.id},
+            'employeeNumber', ${staff.employeeNumber},
+            'position', ${staff.position},
+            'isActive', ${staff.isActive}
+          )
+        `.as("staff"),
+
+          hasStaffRecord: sql`CASE WHEN ${staff.id} IS NOT NULL THEN true ELSE false END`.as("hasStaffRecord"),
         })
         .from(users)
         .leftJoin(organizations, eq(users.organizationId, organizations.id))
         .leftJoin(branches, eq(users.branchId, branches.id))
         .leftJoin(userRoles, eq(users.id, userRoles.userId))
-        .groupBy(users.id, organizations.id, branches.id);
+        .leftJoin(staff, eq(users.id, staff.userId))
+        .groupBy(users.id, organizations.id, branches.id, staff.id);
 
       const rawResults = conditions.length
         ? await finalQuery.where(and(...conditions))
@@ -577,7 +589,6 @@ class UserService {
         ];
       } else if (currentUserRole === 'ADMIN') {
         availableRoles = [
-          { value: 'BRANCH_ADMIN', label: 'Branch Admin' },
           { value: 'ACCOUNTANT', label: 'Accountant' },
           { value: 'TEACHER', label: 'Teacher' },
           { value: 'STUDENT', label: 'Student' },
@@ -587,7 +598,6 @@ class UserService {
       } else if (currentUserRole === 'SUPER_ADMIN') {
         availableRoles = [
           { value: 'ADMIN', label: 'Admin' },
-          { value: 'BRANCH_ADMIN', label: 'Branch Admin' },
           { value: 'ACCOUNTANT', label: 'Accountant' },
           { value: 'TEACHER', label: 'Teacher' },
           { value: 'STUDENT', label: 'Student' },
@@ -679,6 +689,55 @@ class UserService {
     } catch (err: any) {
       console.error('Unexpected error changing user password:', err);
       return { success: false, error: err.message || 'Failed to change user password' };
+    }
+  }
+
+  /**
+   * Change own password
+   */
+  async changeOwnPassword(userId: number, currentPassword: string, newPassword: string) {
+    try {
+      // Get user to verify current password
+      const userResult = await db.select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (userResult.length === 0) {
+        return { success: false, error: 'User not found' };
+      }
+
+      const user = userResult[0];
+      if (!user) {
+        return { success: false, error: 'User not found' };
+      }
+
+      // Verify current password
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!isCurrentPasswordValid) {
+        return { success: false, error: 'Current password is incorrect' };
+      }
+
+      // Hash the new password
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+
+      // Update the password
+      const updatedUsers = await db.update(users)
+        .set({
+          passwordHash,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(users.id, userId))
+        .returning();
+
+      if (updatedUsers.length === 0) {
+        return { success: false, error: 'Failed to update password' };
+      }
+
+      return { success: true, data: { message: 'Password changed successfully' } };
+    } catch (err: any) {
+      console.error('Unexpected error changing own password:', err);
+      return { success: false, error: err.message || 'Failed to change password' };
     }
   }
 

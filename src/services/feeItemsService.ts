@@ -4,7 +4,6 @@ import {
   feeItems,
   feeTypes,
   branches,
-  academicYears,
   users
 } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
@@ -13,10 +12,9 @@ export interface CreateFeeItemData {
   name: string;
   amountPaise: number;
   isMandatory?: boolean;
-  academicYearId: number;
   branchId?: number | null;
   organizationId: number;
-  enabledGrades?: number[];
+  enabledClasses?: number[];
   feeTypeId: number;
 }
 
@@ -24,13 +22,12 @@ export interface UpdateFeeItemData {
   name?: string;
   amountPaise?: number;
   isMandatory?: boolean;
-  enabledGrades?: number[];
+  enabledClasses?: number[];
   feeTypeId?: number;
 }
 
 export interface GetFeeItemsOptions {
   branchId?: number;
-  academicYearId?: number;
   organizationId?: number;
   feeTypeId?: number;
   includeDeleted?: boolean;
@@ -43,10 +40,9 @@ export class FeeItemsService {
         name: data.name,
         amountPaise: data.amountPaise,
         isMandatory: data.isMandatory ?? true,
-        academicYearId: data.academicYearId,
         branchId: data.branchId || null,
         organizationId: data.organizationId,
-        enabledGrades: data.enabledGrades || [],
+        enabledClasses: data.enabledClasses || [],
         feeTypeId: data.feeTypeId,
         isDeleted: false
       }).returning();
@@ -69,9 +65,6 @@ export class FeeItemsService {
         whereConditions.push(eq(feeItems.branchId, options.branchId));
       }
 
-      if (options.academicYearId) {
-        whereConditions.push(eq(feeItems.academicYearId, options.academicYearId));
-      }
 
       if (options.feeTypeId) {
         whereConditions.push(eq(feeItems.feeTypeId, options.feeTypeId));
@@ -86,10 +79,9 @@ export class FeeItemsService {
         name: feeItems.name,
         amountPaise: feeItems.amountPaise,
         isMandatory: feeItems.isMandatory,
-        academicYearId: feeItems.academicYearId,
         branchId: feeItems.branchId,
         organizationId: feeItems.organizationId,
-        enabledGrades: feeItems.enabledGrades,
+        enabledClasses: feeItems.enabledClasses,
         feeTypeId: feeItems.feeTypeId,
         createdAt: feeItems.createdAt,
         isDeleted: feeItems.isDeleted,
@@ -99,15 +91,10 @@ export class FeeItemsService {
         // Branch info
         branchName: branches.name,
         branchCode: branches.code,
-        // Academic year info
-        academicYearName: academicYears.name,
-        academicYearStartDate: academicYears.startDate,
-        academicYearEndDate: academicYears.endDate,
       })
         .from(feeItems)
         .leftJoin(feeTypes, eq(feeItems.feeTypeId, feeTypes.id))
         .leftJoin(branches, eq(feeItems.branchId, branches.id))
-        .leftJoin(academicYears, eq(feeItems.academicYearId, academicYears.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : sql`1=1`)
         .orderBy(desc(feeItems.createdAt));
 
@@ -124,10 +111,9 @@ export class FeeItemsService {
         name: feeItems.name,
         amountPaise: feeItems.amountPaise,
         isMandatory: feeItems.isMandatory,
-        academicYearId: feeItems.academicYearId,
         branchId: feeItems.branchId,
         organizationId: feeItems.organizationId,
-        enabledGrades: feeItems.enabledGrades,
+        enabledClasses: feeItems.enabledClasses,
         feeTypeId: feeItems.feeTypeId,
         createdAt: feeItems.createdAt,
         isDeleted: feeItems.isDeleted,
@@ -137,15 +123,10 @@ export class FeeItemsService {
         // Branch info
         branchName: branches.name,
         branchCode: branches.code,
-        // Academic year info
-        academicYearName: academicYears.name,
-        academicYearStartDate: academicYears.startDate,
-        academicYearEndDate: academicYears.endDate,
       })
         .from(feeItems)
         .leftJoin(feeTypes, eq(feeItems.feeTypeId, feeTypes.id))
         .leftJoin(branches, eq(feeItems.branchId, branches.id))
-        .leftJoin(academicYears, eq(feeItems.academicYearId, academicYears.id))
         .where(eq(feeItems.id, id))
         .limit(1);
 
@@ -165,7 +146,7 @@ export class FeeItemsService {
       if (data.name !== undefined) updateData.name = data.name;
       if (data.amountPaise !== undefined) updateData.amountPaise = data.amountPaise;
       if (data.isMandatory !== undefined) updateData.isMandatory = data.isMandatory;
-      if (data.enabledGrades !== undefined) updateData.enabledGrades = data.enabledGrades;
+      if (data.enabledClasses !== undefined) updateData.enabledClasses = data.enabledClasses;
       if (data.feeTypeId !== undefined) updateData.feeTypeId = data.feeTypeId;
 
       if (Object.keys(updateData).length === 0) {
@@ -205,19 +186,17 @@ export class FeeItemsService {
   }
 
   // Organization Level Methods
-  static async getOrganizationFeeItems(organizationId: number, academicYearId?: number): Promise<ServiceResponse<any[]>> {
+  static async getOrganizationFeeItems(organizationId: number): Promise<ServiceResponse<any[]>> {
     return this.getAll({
       organizationId,
-      academicYearId,
       includeDeleted: false
     });
   }
 
   // Branch Level Methods
-  static async getBranchFeeItems(branchId: number, academicYearId?: number): Promise<ServiceResponse<any[]>> {
+  static async getBranchFeeItems(branchId: number): Promise<ServiceResponse<any[]>> {
     return this.getAll({
       branchId,
-      academicYearId,
       includeDeleted: false
     });
   }

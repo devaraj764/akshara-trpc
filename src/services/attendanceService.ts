@@ -1,5 +1,5 @@
 import db from '../db/index.js'
-import { attendance, studentAttendanceRecords, enrollments, students, sections, grades, branches, academicYears } from '../db/schema.js'
+import { attendance, studentAttendanceRecords, enrollments, students, sections, classes, branches, academicYears, personDetails } from '../db/schema.js'
 import { eq, and, sql, inArray, desc, gte, lte } from 'drizzle-orm'
 import type { ServiceResponse } from '../types.db.js'
 
@@ -25,7 +25,7 @@ export interface AttendanceFilters {
   startDate?: string
   endDate?: string
   shift?: 'MORNING' | 'AFTERNOON' | 'EVENING' | 'FULL_DAY'
-  gradeId?: number
+  classId?: number
   sectionId?: number
   studentId?: number
 }
@@ -170,8 +170,8 @@ export class AttendanceService {
         eq(enrollments.branchId, branchId)
       ]
 
-      if (filters.gradeId) {
-        studentConditions.push(eq(enrollments.gradeId, filters.gradeId))
+      if (filters.classId) {
+        studentConditions.push(eq(enrollments.classId, filters.classId))
       }
 
       if (filters.sectionId) {
@@ -193,21 +193,21 @@ export class AttendanceService {
         markedAt: studentAttendanceRecords.markedAt,
         student: {
           id: students.id,
-          firstName: students.firstName,
-          lastName: students.lastName,
+          firstName: personDetails.firstName,
+          lastName: personDetails.lastName,
           admissionNumber: students.admissionNumber,
-          photoUrl: students.photoUrl
+          photoUrl: personDetails.photoUrl
         },
         enrollment: {
           id: enrollments.id,
           rollNumber: enrollments.rollNumber,
-          gradeId: enrollments.gradeId,
+          classId: enrollments.classId,
           sectionId: enrollments.sectionId
         },
         grade: {
-          id: grades.id,
-          name: grades.name,
-          displayName: grades.displayName
+          id: classes.id,
+          name: classes.name,
+          displayName: classes.displayName
         },
         section: {
           id: sections.id,
@@ -217,10 +217,11 @@ export class AttendanceService {
       .from(studentAttendanceRecords)
       .innerJoin(enrollments, eq(studentAttendanceRecords.enrollmentId, enrollments.id))
       .innerJoin(students, eq(studentAttendanceRecords.studentId, students.id))
-      .innerJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
+      .innerJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .where(and(...studentConditions))
-      .orderBy(students.firstName, students.lastName)
+      .orderBy(personDetails.firstName, personDetails.lastName)
 
       return {
         success: true,
@@ -283,10 +284,23 @@ export class AttendanceService {
     branchId: number,
     organizationId: number,
     academicYearId: number,
-    gradeId?: number,
+    classId?: number,
     sectionId?: number
   ): Promise<ServiceResponse<any[]>> {
     try {
+      console.log('getStudentsForAttendance called with:', {
+        branchId,
+        organizationId,
+        academicYearId,
+        classId,
+        sectionId
+      })
+
+      // Validate required parameters
+      if (!branchId || !organizationId || !academicYearId) {
+        throw new Error('Missing required parameters: branchId, organizationId, or academicYearId')
+      }
+
       const conditions = [
         eq(enrollments.branchId, branchId),
         eq(enrollments.academicYearId, academicYearId),
@@ -295,28 +309,30 @@ export class AttendanceService {
         eq(students.isDeleted, false)
       ]
 
-      if (gradeId) {
-        conditions.push(eq(enrollments.gradeId, gradeId))
+      if (classId) {
+        conditions.push(eq(enrollments.classId, classId))
       }
 
       if (sectionId) {
         conditions.push(eq(enrollments.sectionId, sectionId))
       }
 
+      console.log('Query conditions:', conditions.length)
+
       const studentsList = await db.select({
         studentId: students.id,
         enrollmentId: enrollments.id,
         admissionNumber: students.admissionNumber,
-        firstName: students.firstName,
-        lastName: students.lastName,
-        photoUrl: students.photoUrl,
+        firstName: personDetails.firstName,
+        lastName: personDetails.lastName,
+        photoUrl: personDetails.photoUrl,
         rollNumber: enrollments.rollNumber,
-        gradeId: enrollments.gradeId,
+        classId: enrollments.classId,
         sectionId: enrollments.sectionId,
         grade: {
-          id: grades.id,
-          name: grades.name,
-          displayName: grades.displayName
+          id: classes.id,
+          name: classes.name,
+          displayName: classes.displayName
         },
         section: {
           id: sections.id,
@@ -325,16 +341,20 @@ export class AttendanceService {
       })
       .from(enrollments)
       .innerJoin(students, eq(enrollments.studentId, students.id))
-      .innerJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
+      .innerJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
       .where(and(...conditions))
       .orderBy(
-        grades.order,
+        classes.order,
         sections.name,
         enrollments.rollNumber,
-        students.firstName,
-        students.lastName
+        personDetails.firstName,
+        personDetails.lastName
       )
+
+      console.log('getStudentsForAttendance query result:', studentsList)
+      console.log('Number of students found:', studentsList.length)
 
       return { success: true, data: studentsList }
     } catch (error: any) {

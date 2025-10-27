@@ -5,7 +5,7 @@ import { EnrollmentService } from '../services/enrollmentService.js';
 const createEnrollmentSchema = z.object({
   studentId: z.number(),
   branchId: z.number(),
-  gradeId: z.number(),
+  classId: z.number(),
   sectionId: z.number().optional(),
   academicYearId: z.number(),
   rollNumber: z.number().optional(),
@@ -14,7 +14,7 @@ const createEnrollmentSchema = z.object({
 
 const updateEnrollmentSchema = z.object({
   id: z.number(),
-  gradeId: z.number().optional(),
+  classId: z.number().optional(),
   sectionId: z.number().optional(),
   rollNumber: z.number().optional(),
   status: z.string().optional(),
@@ -78,7 +78,7 @@ export const enrollmentRouter = router({
   getAll: branchAdminProcedure
     .input(z.object({
       branchId: z.number().optional(),
-      gradeId: z.number().optional(),
+      classId: z.number().optional(),
       sectionId: z.number().optional(),
       academicYearId: z.number().optional(),
       status: z.string().optional(),
@@ -87,7 +87,7 @@ export const enrollmentRouter = router({
       // For non-admin users, use their branch context
       const filters = {
         branchId: ctx.user.role === 'SUPER_ADMIN' ? input?.branchId : ctx.user.branchId,
-        gradeId: input?.gradeId,
+        classId: input?.classId,
         sectionId: input?.sectionId,
         academicYearId: input?.academicYearId,
         status: input?.status,

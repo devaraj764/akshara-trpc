@@ -4,6 +4,7 @@ import {
   monthlyPayslips,
   staffSalaries,
   staff,
+  personDetails,
   organizations,
   branches,
   users
@@ -137,20 +138,25 @@ export class MonthlyPayslipService {
         // Include branch info
         branchName: branches.name,
         // Include staff info if requested
-        ...(options.includeStaffInfo ? {
-          staffFirstName: staff.firstName,
-          staffLastName: staff.lastName,
-          staffEmail: staff.email,
-          staffEmployeeNumber: staff.employeeNumber,
-          staffPosition: staff.position,
-        } : {}),
+        staff: {
+          firstName: personDetails.firstName,
+          lastName: personDetails.lastName,
+          email: personDetails.email,
+          employeeNumber: staff.employeeNumber,
+          position: staff.position,
+          hasUserAccount: users.id,
+          userEmail: users.email,
+          userIsActive: users.isActive,
+        }
       })
         .from(monthlyPayslips)
         .leftJoin(organizations, eq(monthlyPayslips.organizationId, organizations.id))
         .leftJoin(branches, eq(monthlyPayslips.branchId, branches.id))
         .leftJoin(staff, eq(monthlyPayslips.employeeId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
+        .leftJoin(users, eq(staff.userId, users.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-        .orderBy(desc(monthlyPayslips.year), desc(monthlyPayslips.month), asc(staff.firstName));
+        .orderBy(desc(monthlyPayslips.year), desc(monthlyPayslips.month), asc(personDetails.firstName));
 
       return {
         success: true,
@@ -212,16 +218,21 @@ export class MonthlyPayslipService {
         status: monthlyPayslips.status,
         organizationName: organizations.name,
         branchName: branches.name,
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
-        staffEmail: staff.email,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
+        staffEmail: personDetails.email,
         staffEmployeeNumber: staff.employeeNumber,
         staffPosition: staff.position,
+        staffHasUserAccount: users.id,
+        staffUserEmail: users.email,
+        staffUserIsActive: users.isActive,
       })
         .from(monthlyPayslips)
         .leftJoin(organizations, eq(monthlyPayslips.organizationId, organizations.id))
         .leftJoin(branches, eq(monthlyPayslips.branchId, branches.id))
         .leftJoin(staff, eq(monthlyPayslips.employeeId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
+        .leftJoin(users, eq(staff.userId, users.id))
         .where(and(...whereConditions))
         .limit(1);
 
@@ -420,7 +431,7 @@ export class MonthlyPayslipService {
   ): Promise<ServiceResponse<any>> {
     return await db.transaction(async (tx) => {
       try {
-        // Get all current staff salaries for the organization
+        // Get current staff salaries for staff who have user accounts only
         const currentSalaries = await tx.select({
           id: staffSalaries.id,
           employeeId: staffSalaries.employeeId,
@@ -429,12 +440,16 @@ export class MonthlyPayslipService {
           allowances: staffSalaries.allowances,
           deductions: staffSalaries.deductions,
           branchId: staffSalaries.branchId, // Include branchId for payslip creation
+          hasUserAccount: users.id, // Check if staff has user account
         })
           .from(staffSalaries)
+          .innerJoin(staff, eq(staffSalaries.employeeId, staff.id))
+          .innerJoin(users, eq(staff.userId, users.id)) // Only staff with user accounts
           .where(
             and(
               eq(staffSalaries.organizationId, organizationId),
-              eq(staffSalaries.isCurrent, true)
+              eq(staffSalaries.isCurrent, true),
+              eq(users.isActive, true) // Only active user accounts
             )
           );
 

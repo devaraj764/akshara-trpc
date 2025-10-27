@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { router, protectedProcedure, branchAdminProcedure, adminProcedure, teacherProcedure, TRPCError } from '../trpc.js';
 import { StudentService } from '../services/studentService.js';
+import { eq } from 'drizzle-orm';
+import db from '../db/index.js';
+import { students } from '../db/schema.js';
 
 const addressSchema = z.object({
   addressLine1: z.string().min(1, 'Address line 1 is required'),
@@ -188,6 +191,61 @@ export const studentRouter = router({
       return { success: true };
     }),
 
+  // Restore student
+  restore: branchAdminProcedure
+    .input(z.object({
+      id: z.number(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Check permissions by getting student data first
+      const studentData = await db.select({
+        id: students.id,
+        organizationId: students.organizationId,
+        branchId: students.branchId,
+        isDeleted: students.isDeleted
+      })
+      .from(students)
+      .where(eq(students.id, input.id))
+      .limit(1);
+
+      if (studentData.length === 0) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      const student = studentData[0];
+
+      // Check permissions
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (student.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only restore students in your branch',
+          });
+        }
+      }
+
+      if (!student.isDeleted) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Student is not deleted',
+        });
+      }
+
+      const result = await StudentService.restore(input.id);
+      
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to restore student',
+        });
+      }
+      
+      return result.data;
+    }),
+
   // Get students by class
   getByClass: teacherProcedure
     .input(z.object({
@@ -200,6 +258,48 @@ export const studentRouter = router({
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: result.error || 'Failed to fetch students',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  // Get student count by section
+  getCountBySection: protectedProcedure
+    .input(z.object({
+      sectionId: z.number(),
+    }))
+    .query(async ({ input }) => {
+      const result = await StudentService.getCountBySection(input.sectionId);
+      
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: result.error || 'Failed to fetch student count',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  // Reassign roll numbers
+  reassignRollNumbers: branchAdminProcedure
+    .input(z.object({
+      sectionId: z.number(),
+      genderOrder: z.enum(['girls_first', 'boys_first', 'mixed']),
+      sortOrder: z.enum(['alphabetical', 'date_of_admission']),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await StudentService.reassignRollNumbers(
+        input.sectionId,
+        input.genderOrder,
+        input.sortOrder
+      );
+      
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: result.error || 'Failed to reassign roll numbers',
         });
       }
       

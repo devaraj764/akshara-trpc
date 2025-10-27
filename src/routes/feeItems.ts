@@ -6,10 +6,9 @@ const createFeeItemSchema = z.object({
   name: z.string().min(1, 'Fee item name is required'),
   amountPaise: z.number().int().min(0, 'Amount must be a positive integer'),
   isMandatory: z.boolean().optional().default(true),
-  academicYearId: z.number().int().positive('Academic Year ID is required'),
   branchId: z.number().int().positive().optional().nullable(),
   organizationId: z.number().int().positive('Organization ID is required'),
-  enabledGrades: z.array(z.number().int().positive()).optional().default([]),
+  enabledClasses: z.array(z.number().int().positive()).optional().default([]),
   feeTypeId: z.number().int().positive('Fee Type ID is required')
 });
 
@@ -18,13 +17,12 @@ const updateFeeItemSchema = z.object({
   name: z.string().min(1, 'Fee item name is required').optional(),
   amountPaise: z.number().int().min(0, 'Amount must be a positive integer').optional(),
   isMandatory: z.boolean().optional(),
-  enabledGrades: z.array(z.number().int().positive()).optional(),
+  enabledClasses: z.array(z.number().int().positive()).optional(),
   feeTypeId: z.number().int().positive().optional()
 });
 
 const getFeeItemsSchema = z.object({
   branchId: z.number().int().positive().optional(),
-  academicYearId: z.number().int().positive().optional(),
   organizationId: z.number().int().positive().optional(),
   feeTypeId: z.number().int().positive().optional(),
   includeDeleted: z.boolean().optional().default(false)
@@ -156,13 +154,12 @@ export const feeItemsRouter = router({
 
   getOrganizationFeeItems: adminProcedure
     .input(z.object({ 
-      organizationId: z.number().int().positive().optional(),
-      academicYearId: z.number().int().positive().optional()
+      organizationId: z.number().int().positive().optional()
     }))
     .query(async ({ input, ctx }) => {
       try {
         const organizationId = input.organizationId || ctx.user.organizationId;
-        const result = await FeeItemsService.getOrganizationFeeItems(organizationId, input.academicYearId);
+        const result = await FeeItemsService.getOrganizationFeeItems(organizationId);
 
         if (!result.success) {
           throw new TRPCError({
@@ -211,13 +208,12 @@ export const feeItemsRouter = router({
 
   getBranchFeeItems: branchAdminProcedure
     .input(z.object({ 
-      academicYearId: z.number().int().positive().optional(),
       feeTypeId: z.number().int().positive().optional(),
       includeDeleted: z.boolean().optional().default(false)
     }))
     .query(async ({ input, ctx }) => {
       try {
-        const result = await FeeItemsService.getBranchFeeItems(ctx.user.branchId!, input.academicYearId);
+        const result = await FeeItemsService.getBranchFeeItems(ctx.user.branchId!);
 
         if (!result.success) {
           throw new TRPCError({

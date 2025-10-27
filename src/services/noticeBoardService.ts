@@ -16,7 +16,6 @@ export interface CreateNoticeData {
   noticeType: string;
   priorityLevel?: string;
   targetAudience?: string[] | undefined;
-  targetGrades?: number[] | undefined;
   targetSections?: number[] | undefined;
   isUrgent?: boolean;
   isPublished?: boolean;
@@ -32,7 +31,6 @@ export interface UpdateNoticeData {
   noticeType?: string | undefined;
   priorityLevel?: string | undefined;
   targetAudience?: string[] | undefined;
-  targetGrades?: number[] | undefined;
   targetSections?: number[] | undefined;
   isUrgent?: boolean | undefined;
   isPublished?: boolean | undefined;
@@ -65,7 +63,6 @@ export class NoticeBoardService {
         noticeType: data.noticeType,
         priorityLevel: data.priorityLevel || 'NORMAL',
         targetAudience: data.targetAudience || [],
-        targetGrades: data.targetGrades || [],
         targetSections: data.targetSections || [],
         isUrgent: data.isUrgent ?? false,
         isPublished: data.isPublished ?? false,
@@ -84,6 +81,8 @@ export class NoticeBoardService {
 
   static async getAll(options: GetNoticesOptions = {}): Promise<ServiceResponse<any[]>> {
     try {
+      console.log('NoticeBoard getAll called with options:', options);
+      
       const whereConditions = [];
 
       if (options.organizationId) {
@@ -110,17 +109,31 @@ export class NoticeBoardService {
         whereConditions.push(eq(noticeBoard.isUrgent, options.isUrgent));
       }
 
-      if (options.targetAudience) {
-        whereConditions.push(sql`${options.targetAudience} = ANY(${noticeBoard.targetAudience})`);
+      if (options.targetAudience && typeof options.targetAudience === 'string' && options.targetAudience.trim() !== '') {
+        try {
+          whereConditions.push(sql`${noticeBoard.targetAudience} @> ARRAY[${options.targetAudience}]`);
+        } catch (error) {
+          console.error('Error in targetAudience query:', error);
+          // Skip this condition if it fails
+        }
       }
 
       if (!options.includeExpired) {
-        whereConditions.push(
-          sql`(${noticeBoard.expiryDate} IS NULL OR ${noticeBoard.expiryDate} >= CURRENT_DATE)`
-        );
+        try {
+          whereConditions.push(
+            sql`(${noticeBoard.expiryDate} IS NULL OR ${noticeBoard.expiryDate} >= CURRENT_DATE)`
+          );
+        } catch (error) {
+          console.error('Error in expiry date query:', error);
+          // Skip this condition if it fails
+        }
       }
 
-      const result = await db.select({
+      console.log('Where conditions count:', whereConditions.length);
+
+      let result;
+      try {
+        result = await db.select({
         id: noticeBoard.id,
         organizationId: noticeBoard.organizationId,
         branchId: noticeBoard.branchId,
@@ -129,7 +142,6 @@ export class NoticeBoardService {
         noticeType: noticeBoard.noticeType,
         priorityLevel: noticeBoard.priorityLevel,
         targetAudience: noticeBoard.targetAudience,
-        targetGrades: noticeBoard.targetGrades,
         targetSections: noticeBoard.targetSections,
         isUrgent: noticeBoard.isUrgent,
         isPublished: noticeBoard.isPublished,
@@ -156,9 +168,18 @@ export class NoticeBoardService {
         .leftJoin(branches, eq(noticeBoard.branchId, branches.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
         .orderBy(desc(noticeBoard.isUrgent), desc(noticeBoard.publishDate), desc(noticeBoard.createdAt));
+      } catch (queryError: any) {
+        console.error('Error executing notice board query:', queryError);
+        return { 
+          success: false, 
+          error: `Database query failed: ${queryError.message || 'Unknown error'}` 
+        };
+      }
 
-      return { success: true, data: result };
+      console.log('Query executed successfully, result count:', result?.length || 0);
+      return { success: true, data: result || [] };
     } catch (error: any) {
+      console.error('Error in NoticeBoard getAll:', error);
       return { success: false, error: error.message || 'Failed to fetch notices' };
     }
   }
@@ -174,7 +195,6 @@ export class NoticeBoardService {
         noticeType: noticeBoard.noticeType,
         priorityLevel: noticeBoard.priorityLevel,
         targetAudience: noticeBoard.targetAudience,
-        targetGrades: noticeBoard.targetGrades,
         targetSections: noticeBoard.targetSections,
         isUrgent: noticeBoard.isUrgent,
         isPublished: noticeBoard.isPublished,
@@ -221,7 +241,6 @@ export class NoticeBoardService {
       if (data.noticeType !== undefined) updateData.noticeType = data.noticeType;
       if (data.priorityLevel !== undefined) updateData.priorityLevel = data.priorityLevel;
       if (data.targetAudience !== undefined) updateData.targetAudience = data.targetAudience;
-      if (data.targetGrades !== undefined) updateData.targetGrades = data.targetGrades;
       if (data.targetSections !== undefined) updateData.targetSections = data.targetSections;
       if (data.isUrgent !== undefined) updateData.isUrgent = data.isUrgent;
       if (data.isPublished !== undefined) updateData.isPublished = data.isPublished;

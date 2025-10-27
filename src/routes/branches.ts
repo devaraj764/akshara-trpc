@@ -2,23 +2,35 @@ import { z } from 'zod';
 import { router, adminProcedure, TRPCError } from '../trpc.js';
 import { branchesService } from '../services/branchesService.js';
 
+const addressSchema = z.object({
+  addressLine1: z.string().min(1, 'Address line 1 is required'),
+  addressLine2: z.string().optional().nullable(),
+  pincode: z.string().optional().nullable(),
+  cityVillage: z.string().min(1, 'City/Village is required'),
+  district: z.string().min(1, 'District is required'),
+  state: z.string().min(1, 'State is required'),
+  country: z.string().optional(),
+});
+
 const createBranchSchema = z.object({
   name: z.string().min(1, 'Branch name is required'),
   code: z.string().min(1, 'Branch code is required').max(10, 'Branch code must be 10 characters or less'),
-  address: z.string().optional(),
-  contactPhone: z.string().optional(),
+  address: addressSchema.optional(),
+  contactPhone: z.string().regex(/^\d{0,10}$/, 'Phone number must be maximum 10 digits').optional(),
   organizationId: z.number().optional(), // Optional because it will default to admin's org
-  managerId: z.number().optional(),
+  timezone: z.string().optional(),
+  meta: z.any().optional(),
 });
 
 const updateBranchSchema = z.object({
   id: z.number(),
   name: z.string().min(1, 'Branch name is required').optional(),
   code: z.string().min(1, 'Branch code is required').max(10, 'Branch code must be 10 characters or less').optional(),
-  address: z.string().optional(),
-  contactPhone: z.string().optional(),
-  managerId: z.number().optional(),
-  isActive: z.boolean().optional(),
+  address: addressSchema.optional(),
+  contactPhone: z.string().regex(/^\d{0,10}$/, 'Phone number must be maximum 10 digits').optional(),
+  timezone: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  meta: z.any().optional(),
 });
 
 const branchFiltersSchema = z.object({

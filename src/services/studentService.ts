@@ -11,9 +11,11 @@ import {
   studentDocuments,
   studentExtracurricularActivities,
   enrollments,
-  grades,
+  classes,
   sections,
-  academicYears
+  academicYears,
+  parents,
+  studentParents
 } from '../db/schema.js';
 import type { ServiceResponse } from '../types.db.js';
 
@@ -76,9 +78,14 @@ export class StudentService {
         country: addresses.country,
         // Current enrollment data
         enrollmentId: enrollments.id,
-        gradeName: grades.name,
+        className: classes.name,
         sectionName: sections.name,
         academicYearId: academicYears.id,
+        // Primary parent data
+        primaryParentId: parents.id,
+        primaryParentName: sql<string>`CONCAT(parent_person_details.first_name, ' ', COALESCE(parent_person_details.last_name, ''))`,
+        primaryParentPhone: sql<string>`parent_person_details.phone`,
+        primaryParentEmail: sql<string>`parent_person_details.email`,
       })
       .from(students)
       .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
@@ -92,8 +99,14 @@ export class StudentService {
         eq(enrollments.academicYearId, academicYears.id),
         eq(academicYears.isCurrent, true)
       ))
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
+      .leftJoin(studentParents, and(
+        eq(students.id, studentParents.studentId),
+        eq(studentParents.isPrimary, true)
+      ))
+      .leftJoin(parents, eq(studentParents.parentId, parents.id))
+      .leftJoin(sql`person_details as parent_person_details`, sql`parents.person_detail_id = parent_person_details.id`)
       .where(and(
         eq(students.id, id),
         eq(students.isDeleted, false)
@@ -183,9 +196,14 @@ export class StudentService {
         country: addresses.country,
         // Current enrollment data
         enrollmentId: enrollments.id,
-        gradeName: grades.name,
+        className: classes.name,
         sectionName: sections.name,
         academicYearId: academicYears.id,
+        // Primary parent data
+        primaryParentId: parents.id,
+        primaryParentName: sql<string>`CONCAT(parent_person_details.first_name, ' ', COALESCE(parent_person_details.last_name, ''))`,
+        primaryParentPhone: sql<string>`parent_person_details.phone`,
+        primaryParentEmail: sql<string>`parent_person_details.email`,
       })
       .from(students)
       .leftJoin(personDetails, eq(students.personDetailId, personDetails.id))
@@ -197,8 +215,14 @@ export class StudentService {
         // Always join all enrollments - filtering happens in WHERE clause
       ))
       .leftJoin(academicYears, eq(enrollments.academicYearId, academicYears.id))
-      .leftJoin(grades, eq(enrollments.gradeId, grades.id))
+      .leftJoin(classes, eq(enrollments.classId, classes.id))
       .leftJoin(sections, eq(enrollments.sectionId, sections.id))
+      .leftJoin(studentParents, and(
+        eq(students.id, studentParents.studentId),
+        eq(studentParents.isPrimary, true)
+      ))
+      .leftJoin(parents, eq(studentParents.parentId, parents.id))
+      .leftJoin(sql`person_details as parent_person_details`, sql`parents.person_detail_id = parent_person_details.id`)
       .where(and(...whereConditions))
       .orderBy(students.createdAt);
 
@@ -435,6 +459,43 @@ export class StudentService {
     } catch (error: any) {
       console.error('Error deleting student:', error);
       return { success: false, error: error.message || 'Failed to delete student' };
+    }
+  }
+
+  static async restore(id: number): Promise<ServiceResponse<any>> {
+    try {
+      const result = await db.update(students)
+        .set({ 
+          isDeleted: false,
+          deletedAt: null,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(students.id, id),
+          eq(students.isDeleted, true)
+        ))
+        .returning({
+          id: students.id,
+          organizationId: students.organizationId,
+          branchId: students.branchId,
+          userId: students.userId,
+          admissionNumber: students.admissionNumber,
+          addressId: students.addressId,
+          personDetailId: students.personDetailId,
+          meta: students.meta,
+          isActive: sql<boolean>`NOT ${students.isDeleted}`,
+          createdAt: students.createdAt,
+          updatedAt: students.updatedAt
+        });
+
+      if (result.length === 0) {
+        return { success: false, error: 'Student not found or not deleted' };
+      }
+
+      return { success: true, data: result[0] };
+    } catch (error: any) {
+      console.error('Error restoring student:', error);
+      return { success: false, error: error.message || 'Failed to restore student' };
     }
   }
 
@@ -697,6 +758,114 @@ export class StudentService {
       return { success: true, data: result };
     } catch (error: any) {
       return { success: false, error: error.message || 'Failed to fetch expiring documents' };
+    }
+  }
+
+  static async getCountBySection(sectionId: number): Promise<ServiceResponse<number>> {
+    try {
+      const result = await db.select({
+        count: sql<number>`COUNT(*)`
+      })
+        .from(enrollments)
+        .innerJoin(students, eq(enrollments.studentId, students.id))
+        .where(
+          and(
+            eq(enrollments.sectionId, sectionId),
+            eq(students.isDeleted, false),
+            eq(enrollments.isDeleted, false)
+          )
+        );
+
+      return { success: true, data: result[0]?.count || 0 };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to get student count' };
+    }
+  }
+
+  static async reassignRollNumbers(
+    sectionId: number, 
+    genderOrder: 'girls_first' | 'boys_first' | 'mixed', 
+    sortOrder: 'alphabetical' | 'date_of_admission'
+  ): Promise<ServiceResponse<any>> {
+    try {
+      // Get all students in the section
+      const studentsData = await db.select({
+        enrollmentId: enrollments.id,
+        studentId: students.id,
+        firstName: personDetails.firstName,
+        lastName: personDetails.lastName,
+        gender: personDetails.gender,
+        admissionDate: students.createdAt,
+        currentRollNumber: enrollments.rollNumber
+      })
+        .from(enrollments)
+        .innerJoin(students, eq(enrollments.studentId, students.id))
+        .innerJoin(personDetails, eq(students.personDetailId, personDetails.id))
+        .where(
+          and(
+            eq(enrollments.sectionId, sectionId),
+            eq(students.isDeleted, false),
+            eq(enrollments.isDeleted, false)
+          )
+        );
+
+      if (studentsData.length === 0) {
+        return { success: false, error: 'No students found in this section' };
+      }
+
+      // Sort students based on criteria
+      let sortedStudents = [...studentsData];
+
+      // First sort by the specified order
+      if (sortOrder === 'alphabetical') {
+        sortedStudents.sort((a, b) => {
+          const nameA = `${a.firstName} ${a.lastName || ''}`.trim().toLowerCase();
+          const nameB = `${b.firstName} ${b.lastName || ''}`.trim().toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+      } else if (sortOrder === 'date_of_admission') {
+        sortedStudents.sort((a, b) => 
+          new Date(a.admissionDate).getTime() - new Date(b.admissionDate).getTime()
+        );
+      }
+
+      // Then apply gender order if specified
+      if (genderOrder === 'girls_first') {
+        sortedStudents.sort((a, b) => {
+          if (a.gender === 'FEMALE' && b.gender !== 'FEMALE') return -1;
+          if (a.gender !== 'FEMALE' && b.gender === 'FEMALE') return 1;
+          return 0;
+        });
+      } else if (genderOrder === 'boys_first') {
+        sortedStudents.sort((a, b) => {
+          if (a.gender === 'MALE' && b.gender !== 'MALE') return -1;
+          if (a.gender !== 'MALE' && b.gender === 'MALE') return 1;
+          return 0;
+        });
+      }
+
+      // Assign new roll numbers
+      const updates = sortedStudents.map((student, index) => ({
+        enrollmentId: student.enrollmentId,
+        newRollNumber: index + 1
+      }));
+
+      // Update roll numbers in database
+      for (const update of updates) {
+        await db.update(enrollments)
+          .set({ rollNumber: update.newRollNumber })
+          .where(eq(enrollments.id, update.enrollmentId));
+      }
+
+      return { 
+        success: true, 
+        data: { 
+          message: `Roll numbers reassigned for ${updates.length} students`,
+          studentsUpdated: updates.length 
+        } 
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to reassign roll numbers' };
     }
   }
 }

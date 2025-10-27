@@ -1,16 +1,15 @@
 import { z } from 'zod';
 import { router, publicProcedure, TRPCError } from '../trpc.js';
 import { authService } from '../services/authService.js';
+import { addressSchema } from '../schemas/address.js';
 
-// Address schema for organization
-const addressSchema = z.object({
-  addressLine1: z.string().min(1, 'Address line 1 is required'),
-  addressLine2: z.string().optional(),
-  pincode: z.string().optional(),
-  cityVillage: z.string().min(1, 'City/Village is required'),
-  district: z.string().min(1, 'District is required'),
-  state: z.string().min(1, 'State is required'),
-  country: z.string().optional(),
+const organizationSetupSchema = z.object({
+  academic_years: z.array(z.any()).optional(),
+  subjects: z.array(z.any()).optional(),
+  departments: z.array(z.any()).optional(),
+  grades: z.array(z.any()).optional(),
+  fee_types: z.array(z.any()).optional(),
+  fee_items: z.array(z.any()).optional(),
 });
 
 const signUpSchema = z.object({
@@ -21,7 +20,8 @@ const signUpSchema = z.object({
   organizationRegistrationNumber: z.string().optional(),
   organizationAddress: addressSchema.optional(),
   organizationPhone: z.string().regex(/^\d{0,10}$/, 'Phone number must be maximum 10 digits').optional(),
-  organizationEmail: z.string().email({ message: "Please enter a valid email address" }).optional(),
+  organizationEmail: z.string().email({ message: "Please enter a valid email address" }).optional().or(z.literal('')),
+  organizationSetup: organizationSetupSchema.optional(),
 });
 
 const signInSchema = z.object({

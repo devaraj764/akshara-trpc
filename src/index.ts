@@ -29,6 +29,9 @@ import { subjectAssignmentsRouter } from './routes/subjectAssignments.js';
 import { feeTypesRouter } from './routes/feeTypes.js';
 import { feeItemsRouter } from './routes/feeItems.js';
 import { parentRouter } from './routes/parent.js';
+import { timetableRouter } from './routes/timetable.js';
+import { ticketRouter } from './routes/ticket.js';
+import { dashboardRouter } from './routes/dashboard.js';
 import morgan from 'morgan';
 
 // Custom Morgan format for detailed logging
@@ -89,6 +92,9 @@ const appRouter = router({
   feeTypes: feeTypesRouter,
   feeItems: feeItemsRouter,
   parents: parentRouter,
+  timetables: timetableRouter,
+  tickets: ticketRouter,
+  dashboard: dashboardRouter,
 });
 
 // Export type definition of API

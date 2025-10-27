@@ -1,10 +1,12 @@
-import { pgTable, varchar, timestamp, text, integer, serial, foreignKey, json, uniqueIndex, index, boolean, jsonb, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, varchar, timestamp, text, integer, index, foreignKey, serial, boolean, json, uniqueIndex, jsonb, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const attendanceStatus = pgEnum("AttendanceStatus", ['PRESENT', 'ABSENT', 'LEAVE', 'HOLIDAY'])
 export const feeStatus = pgEnum("FeeStatus", ['PENDING', 'PAID', 'PARTIAL'])
 export const roleEnum = pgEnum("RoleEnum", ['SUPER_ADMIN', 'ADMIN', 'BRANCH_ADMIN', 'FRONT_DESK', 'TEACHER', 'PARENT', 'STUDENT', 'ACCOUNTANT', 'STAFF'])
 export const shiftEnum = pgEnum("ShiftEnum", ['MORNING', 'AFTERNOON', 'EVENING', 'FULL_DAY'])
+export const ticketPriority = pgEnum("TicketPriority", ['LOW', 'MEDIUM', 'HIGH', 'URGENT'])
+export const ticketStatus = pgEnum("TicketStatus", ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REOPENED'])
 
 
 export const prismaMigrations = pgTable("_prisma_migrations", {
@@ -18,18 +20,45 @@ export const prismaMigrations = pgTable("_prisma_migrations", {
 	appliedStepsCount: integer("applied_steps_count").default(0).notNull(),
 });
 
-export const addresses = pgTable("addresses", {
+export const noticeBoard = pgTable("notice_board", {
 	id: serial().primaryKey().notNull(),
-	addressLine1: varchar("address_line_1", { length: 255 }).notNull(),
-	addressLine2: varchar("address_line_2", { length: 255 }),
-	pincode: varchar({ length: 10 }),
-	cityVillage: varchar("city_village", { length: 128 }).notNull(),
-	district: varchar({ length: 128 }).notNull(),
-	state: varchar({ length: 128 }).notNull(),
-	country: varchar({ length: 128 }).default('India').notNull(),
+	organizationId: integer("organization_id"),
+	branchId: integer("branch_id"),
+	title: varchar({ length: 255 }).notNull(),
+	content: text().notNull(),
+	noticeType: varchar("notice_type", { length: 64 }).notNull(),
+	priorityLevel: varchar("priority_level", { length: 32 }).default('NORMAL').notNull(),
+	targetAudience: text("target_audience").array().default([]),
+	targetSections: integer("target_sections").array().default([]),
+	isUrgent: boolean("is_urgent").default(false).notNull(),
+	isPublished: boolean("is_published").default(false).notNull(),
+	publishDate: timestamp("publish_date", { precision: 6, mode: 'string' }),
+	expiryDate: timestamp("expiry_date", { precision: 6, mode: 'string' }),
+	attachments: json(),
+	authorId: integer("author_id"),
+	approvedBy: integer("approved_by"),
+	approvedAt: timestamp("approved_at", { precision: 6, mode: 'string' }),
+	readCount: integer("read_count").default(0).notNull(),
 	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+	targetClasses: integer("target_classes").array().default([]),
+}, (table) => [
+	index("idx_notice_board_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
+	index("idx_notice_board_priority").using("btree", table.priorityLevel.asc().nullsLast().op("text_ops")),
+	index("idx_notice_board_publish_date").using("btree", table.publishDate.asc().nullsLast().op("timestamp_ops")),
+	index("idx_notice_board_published").using("btree", table.isPublished.asc().nullsLast().op("bool_ops")),
+	index("idx_notice_board_type").using("btree", table.noticeType.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "notice_board_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "notice_board_organization_id_organizations_id_fk"
+		}),
+]);
 
 export const organizations = pgTable("organizations", {
 	id: serial().primaryKey().notNull(),
@@ -44,13 +73,316 @@ export const organizations = pgTable("organizations", {
 	meta: json(),
 	enabledDepartments: integer("enabled_departments").array().default([]),
 	enabledSubjects: integer("enabled_subjects").array().default([]),
-	enabledGrades: integer("enabled_grades").array().default([]),
 	enabledFeetypes: integer("enabled_feetypes").array().default([]),
+	enabledClasses: integer("enabled_classes").array().default([]),
 }, (table) => [
 	foreignKey({
 			columns: [table.addressId],
 			foreignColumns: [addresses.id],
 			name: "organizations_address_id_addresses_id_fk"
+		}),
+]);
+
+export const sections = pgTable("sections", {
+	id: serial().primaryKey().notNull(),
+	organizationId: integer("organization_id").notNull(),
+	branchId: integer("branch_id").notNull(),
+	classTeacherId: integer("class_teacher_id"),
+	name: varchar({ length: 32 }).notNull(),
+	capacity: integer(),
+	isDeleted: boolean("is_deleted").default(false).notNull(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	classId: integer("class_id").notNull(),
+}, (table) => [
+	index("idx_sections_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
+	index("idx_sections_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
+	uniqueIndex("uq_section_branch_class_name").using("btree", table.branchId.asc().nullsLast().op("text_ops"), table.classId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.classId],
+			foreignColumns: [classes.id],
+			name: "sections_class_id_classes_id_fk"
+		}),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "sections_organization_id_organizations_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "sections_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.classTeacherId],
+			foreignColumns: [staff.id],
+			name: "sections_class_teacher_id_staff_id_fk"
+		}),
+]);
+
+export const timetables = pgTable("timetables", {
+	id: serial().primaryKey().notNull(),
+	branchId: integer("branch_id").notNull(),
+	sectionId: integer("section_id").notNull(),
+	dayOfWeek: integer("day_of_week").notNull(),
+	periodId: integer("period_id").notNull(),
+	subjectId: integer("subject_id").notNull(),
+	staffId: integer("staff_id"),
+	classId: integer("class_id").notNull(),
+}, (table) => [
+	uniqueIndex("uq_timetable_section_slot").using("btree", table.sectionId.asc().nullsLast().op("int4_ops"), table.dayOfWeek.asc().nullsLast().op("int4_ops"), table.periodId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("uq_timetable_staff_slot").using("btree", table.staffId.asc().nullsLast().op("int4_ops"), table.dayOfWeek.asc().nullsLast().op("int4_ops"), table.periodId.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.classId],
+			foreignColumns: [classes.id],
+			name: "timetables_class_id_classes_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "timetables_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.periodId],
+			foreignColumns: [periods.id],
+			name: "timetables_period_id_periods_id_fk"
+		}),
+	foreignKey({
+			columns: [table.sectionId],
+			foreignColumns: [sections.id],
+			name: "timetables_section_id_sections_id_fk"
+		}),
+	foreignKey({
+			columns: [table.subjectId],
+			foreignColumns: [subjects.id],
+			name: "timetables_subject_id_subjects_id_fk"
+		}),
+	foreignKey({
+			columns: [table.staffId],
+			foreignColumns: [staff.id],
+			name: "timetables_staff_id_staff_id_fk"
+		}),
+]);
+
+export const classes = pgTable("classes", {
+	id: serial().primaryKey().notNull(),
+	organizationId: integer("organization_id"),
+	branchId: integer("branch_id"),
+	name: varchar({ length: 64 }).notNull(),
+	displayName: varchar("display_name", { length: 128 }),
+	order: integer(),
+	isPrivate: boolean("is_private").default(false).notNull(),
+	isDeleted: boolean("is_deleted").default(false).notNull(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("idx_classes_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
+	index("idx_classes_private").using("btree", table.isPrivate.asc().nullsLast().op("bool_ops")),
+	uniqueIndex("uq_class_name_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "classes_organization_id_organizations_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "classes_branch_id_branches_id_fk"
+		}),
+]);
+
+export const tickets = pgTable("tickets", {
+	id: serial().primaryKey().notNull(),
+	organizationId: integer("organization_id").notNull(),
+	branchId: integer("branch_id"),
+	title: varchar({ length: 255 }).notNull(),
+	description: text(),
+	category: varchar({ length: 128 }).notNull(),
+	status: ticketStatus().default('OPEN').notNull(),
+	priority: ticketPriority().default('MEDIUM').notNull(),
+	fromUserId: integer("from_user_id").notNull(),
+	assignedTo: integer("assigned_to"),
+	resolvedBy: integer("resolved_by"),
+	resolutionNotes: text("resolution_notes"),
+	attachments: json(),
+	tags: text().array().default([]),
+	resolvedAt: timestamp("resolved_at", { precision: 6, mode: 'string' }),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("idx_tickets_assigned").using("btree", table.assignedTo.asc().nullsLast().op("int4_ops")),
+	index("idx_tickets_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
+	index("idx_tickets_category").using("btree", table.category.asc().nullsLast().op("text_ops")),
+	index("idx_tickets_created").using("btree", table.createdAt.asc().nullsLast().op("timestamp_ops")),
+	index("idx_tickets_from_user").using("btree", table.fromUserId.asc().nullsLast().op("int4_ops")),
+	index("idx_tickets_organization").using("btree", table.organizationId.asc().nullsLast().op("int4_ops")),
+	index("idx_tickets_priority").using("btree", table.priority.asc().nullsLast().op("enum_ops")),
+	index("idx_tickets_status").using("btree", table.status.asc().nullsLast().op("enum_ops")),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "tickets_organization_id_organizations_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "tickets_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.fromUserId],
+			foreignColumns: [users.id],
+			name: "tickets_from_user_id_users_id_fk"
+		}),
+	foreignKey({
+			columns: [table.assignedTo],
+			foreignColumns: [users.id],
+			name: "tickets_assigned_to_users_id_fk"
+		}),
+	foreignKey({
+			columns: [table.resolvedBy],
+			foreignColumns: [users.id],
+			name: "tickets_resolved_by_users_id_fk"
+		}),
+]);
+
+export const enrollments = pgTable("enrollments", {
+	id: serial().primaryKey().notNull(),
+	studentId: integer("student_id").notNull(),
+	branchId: integer("branch_id").notNull(),
+	sectionId: integer("section_id"),
+	academicYearId: integer("academic_year_id").notNull(),
+	rollNumber: integer("roll_number"),
+	status: varchar({ length: 64 }).default('ENROLLED').notNull(),
+	enrolledAt: timestamp("enrolled_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	leftAt: timestamp("left_at", { precision: 6, mode: 'string' }),
+	isDeleted: boolean("is_deleted").default(false).notNull(),
+	meta: json(),
+	classId: integer("class_id").notNull(),
+}, (table) => [
+	index("idx_enrollments_branch_year").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.academicYearId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("uq_student_academic_year").using("btree", table.studentId.asc().nullsLast().op("int4_ops"), table.academicYearId.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.classId],
+			foreignColumns: [classes.id],
+			name: "enrollments_class_id_classes_id_fk"
+		}),
+	foreignKey({
+			columns: [table.academicYearId],
+			foreignColumns: [academicYears.id],
+			name: "enrollments_academic_year_id_academic_years_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "enrollments_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.sectionId],
+			foreignColumns: [sections.id],
+			name: "enrollments_section_id_sections_id_fk"
+		}),
+	foreignKey({
+			columns: [table.studentId],
+			foreignColumns: [students.id],
+			name: "enrollments_student_id_students_id_fk"
+		}),
+]);
+
+export const users = pgTable("users", {
+	id: serial().primaryKey().notNull(),
+	email: varchar({ length: 255 }).notNull(),
+	passwordHash: text("password_hash").notNull(),
+	phone: varchar({ length: 32 }),
+	organizationId: integer("organization_id"),
+	branchId: integer("branch_id"),
+	displayName: varchar("display_name", { length: 255 }),
+	avatarUrl: varchar("avatar_url", { length: 1024 }),
+	isActive: boolean("is_active").default(true).notNull(),
+	loginAttempts: integer("login_attempts").default(0).notNull(),
+	lockedUntil: timestamp("locked_until", { precision: 6, mode: 'string' }),
+	deletedAt: timestamp("deleted_at", { precision: 6, mode: 'string' }),
+	isDeleted: boolean("is_deleted").default(false).notNull(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	meta: json(),
+	lastVerifiedAt: timestamp("last_verified_at", { precision: 6, mode: 'string' }),
+}, (table) => [
+	index("idx_users_active").using("btree", table.isActive.asc().nullsLast().op("bool_ops"), table.isDeleted.asc().nullsLast().op("bool_ops")),
+	index("idx_users_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
+	index("idx_users_org").using("btree", table.organizationId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("users_email_unique").using("btree", table.email.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "users_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "users_organization_id_organizations_id_fk"
+		}),
+]);
+
+export const addresses = pgTable("addresses", {
+	id: serial().primaryKey().notNull(),
+	addressLine1: varchar("address_line_1", { length: 255 }).notNull(),
+	addressLine2: varchar("address_line_2", { length: 255 }),
+	pincode: varchar({ length: 10 }),
+	cityVillage: varchar("city_village", { length: 128 }).notNull(),
+	district: varchar({ length: 128 }).notNull(),
+	state: varchar({ length: 128 }).notNull(),
+	country: varchar({ length: 128 }).default('India').notNull(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const staff = pgTable("staff", {
+	id: serial().primaryKey().notNull(),
+	userId: integer("user_id"),
+	organizationId: integer("organization_id").notNull(),
+	branchId: integer("branch_id").notNull(),
+	departmentId: integer("department_id"),
+	addressId: integer("address_id"),
+	personDetailId: integer("person_detail_id"),
+	employeeNumber: varchar("employee_number", { length: 128 }),
+	employeeType: varchar("employee_type", { length: 32 }).default('STAFF').notNull(),
+	position: varchar({ length: 255 }),
+	hireDate: timestamp("hire_date", { precision: 6, mode: 'string' }),
+	isActive: boolean("is_active").default(true).notNull(),
+	professionalHistory: json("professional_history"),
+	meta: json(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	workingHours: json("working_hours"),
+}, (table) => [
+	uniqueIndex("uq_staff_employee_number").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.employeeNumber.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.addressId],
+			foreignColumns: [addresses.id],
+			name: "staff_address_id_addresses_id_fk"
+		}),
+	foreignKey({
+			columns: [table.personDetailId],
+			foreignColumns: [personDetails.id],
+			name: "staff_person_detail_id_person_details_id_fk"
+		}),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "staff_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.departmentId],
+			foreignColumns: [departments.id],
+			name: "staff_department_id_departments_id_fk"
+		}),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "staff_organization_id_organizations_id_fk"
+		}),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [users.id],
+			name: "staff_user_id_users_id_fk"
 		}),
 ]);
 
@@ -78,40 +410,6 @@ export const branches = pgTable("branches", {
 			columns: [table.organizationId],
 			foreignColumns: [organizations.id],
 			name: "branches_organization_id_organizations_id_fk"
-		}),
-]);
-
-export const users = pgTable("users", {
-	id: serial().primaryKey().notNull(),
-	email: varchar({ length: 255 }).notNull(),
-	passwordHash: text("password_hash").notNull(),
-	phone: varchar({ length: 32 }),
-	organizationId: integer("organization_id"),
-	branchId: integer("branch_id"),
-	displayName: varchar("display_name", { length: 255 }),
-	avatarUrl: varchar("avatar_url", { length: 1024 }),
-	isActive: boolean("is_active").default(true).notNull(),
-	loginAttempts: integer("login_attempts").default(0).notNull(),
-	lockedUntil: timestamp("locked_until", { precision: 6, mode: 'string' }),
-	deletedAt: timestamp("deleted_at", { precision: 6, mode: 'string' }),
-	isDeleted: boolean("is_deleted").default(false).notNull(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	meta: json(),
-}, (table) => [
-	index("idx_users_active").using("btree", table.isActive.asc().nullsLast().op("bool_ops"), table.isDeleted.asc().nullsLast().op("bool_ops")),
-	index("idx_users_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
-	index("idx_users_org").using("btree", table.organizationId.asc().nullsLast().op("int4_ops")),
-	uniqueIndex("users_email_unique").using("btree", table.email.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "users_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "users_organization_id_organizations_id_fk"
 		}),
 ]);
 
@@ -193,119 +491,6 @@ export const academicCalendarEvents = pgTable("academic_calendar_events", {
 		}),
 ]);
 
-export const grades = pgTable("grades", {
-	id: serial().primaryKey().notNull(),
-	organizationId: integer("organization_id"),
-	branchId: integer("branch_id"),
-	name: varchar({ length: 64 }).notNull(),
-	displayName: varchar("display_name", { length: 128 }),
-	order: integer(),
-	isPrivate: boolean("is_private").default(false).notNull(),
-	isDeleted: boolean("is_deleted").default(false).notNull(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("idx_grades_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
-	index("idx_grades_private").using("btree", table.isPrivate.asc().nullsLast().op("bool_ops")),
-	uniqueIndex("uq_grade_name_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "grades_organization_id_organizations_id_fk"
-		}),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "grades_branch_id_branches_id_fk"
-		}),
-]);
-
-export const sections = pgTable("sections", {
-	id: serial().primaryKey().notNull(),
-	organizationId: integer("organization_id").notNull(),
-	branchId: integer("branch_id").notNull(),
-	gradeId: integer("grade_id").notNull(),
-	classTeacherId: integer("class_teacher_id"),
-	name: varchar({ length: 32 }).notNull(),
-	capacity: integer(),
-	isDeleted: boolean("is_deleted").default(false).notNull(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("idx_sections_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
-	index("idx_sections_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
-	uniqueIndex("uq_section_branch_grade_name").using("btree", table.branchId.asc().nullsLast().op("text_ops"), table.gradeId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "sections_organization_id_organizations_id_fk"
-		}),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "sections_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.gradeId],
-			foreignColumns: [grades.id],
-			name: "sections_grade_id_grades_id_fk"
-		}),
-	foreignKey({
-			columns: [table.classTeacherId],
-			foreignColumns: [staff.id],
-			name: "sections_class_teacher_id_staff_id_fk"
-		}),
-]);
-
-export const staff = pgTable("staff", {
-	id: serial().primaryKey().notNull(),
-	userId: integer("user_id"),
-	organizationId: integer("organization_id").notNull(),
-	branchId: integer("branch_id").notNull(),
-	departmentId: integer("department_id"),
-	addressId: integer("address_id"),
-	personDetailId: integer("person_detail_id"),
-	employeeNumber: varchar("employee_number", { length: 128 }),
-	employeeType: varchar("employee_type", { length: 32 }).default('STAFF').notNull(),
-	position: varchar({ length: 255 }),
-	hireDate: timestamp("hire_date", { precision: 6, mode: 'string' }),
-	isActive: boolean("is_active").default(true).notNull(),
-	professionalHistory: json("professional_history"),
-	meta: json(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	uniqueIndex("uq_staff_employee_number").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.employeeNumber.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.addressId],
-			foreignColumns: [addresses.id],
-			name: "staff_address_id_addresses_id_fk"
-		}),
-	foreignKey({
-			columns: [table.personDetailId],
-			foreignColumns: [personDetails.id],
-			name: "staff_person_detail_id_person_details_id_fk"
-		}),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "staff_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.departmentId],
-			foreignColumns: [departments.id],
-			name: "staff_department_id_departments_id_fk"
-		}),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "staff_organization_id_organizations_id_fk"
-		}),
-	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "staff_user_id_users_id_fk"
-		}),
-]);
-
 export const subjects = pgTable("subjects", {
 	id: serial().primaryKey().notNull(),
 	organizationId: integer("organization_id"),
@@ -342,50 +527,6 @@ export const periods = pgTable("periods", {
 			columns: [table.branchId],
 			foreignColumns: [branches.id],
 			name: "periods_branch_id_branches_id_fk"
-		}),
-]);
-
-export const timetables = pgTable("timetables", {
-	id: serial().primaryKey().notNull(),
-	branchId: integer("branch_id").notNull(),
-	gradeId: integer("grade_id").notNull(),
-	sectionId: integer("section_id").notNull(),
-	dayOfWeek: integer("day_of_week").notNull(),
-	periodId: integer("period_id").notNull(),
-	subjectId: integer("subject_id").notNull(),
-	staffId: integer("staff_id"),
-}, (table) => [
-	uniqueIndex("uq_timetable_section_slot").using("btree", table.sectionId.asc().nullsLast().op("int4_ops"), table.dayOfWeek.asc().nullsLast().op("int4_ops"), table.periodId.asc().nullsLast().op("int4_ops")),
-	uniqueIndex("uq_timetable_staff_slot").using("btree", table.staffId.asc().nullsLast().op("int4_ops"), table.dayOfWeek.asc().nullsLast().op("int4_ops"), table.periodId.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "timetables_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.gradeId],
-			foreignColumns: [grades.id],
-			name: "timetables_grade_id_grades_id_fk"
-		}),
-	foreignKey({
-			columns: [table.periodId],
-			foreignColumns: [periods.id],
-			name: "timetables_period_id_periods_id_fk"
-		}),
-	foreignKey({
-			columns: [table.sectionId],
-			foreignColumns: [sections.id],
-			name: "timetables_section_id_sections_id_fk"
-		}),
-	foreignKey({
-			columns: [table.subjectId],
-			foreignColumns: [subjects.id],
-			name: "timetables_subject_id_subjects_id_fk"
-		}),
-	foreignKey({
-			columns: [table.staffId],
-			foreignColumns: [staff.id],
-			name: "timetables_staff_id_staff_id_fk"
 		}),
 ]);
 
@@ -480,7 +621,6 @@ export const parents = pgTable("parents", {
 	organizationId: integer("organization_id").notNull(),
 	branchId: integer("branch_id").notNull(),
 	personDetailId: integer("person_detail_id"),
-	relationship: varchar({ length: 64 }),
 	occupation: varchar({ length: 255 }),
 	companyName: varchar("company_name", { length: 255 }),
 	annualIncome: integer("annual_income"),
@@ -652,89 +792,6 @@ export const assets = pgTable("assets", {
 		}),
 ]);
 
-export const noticeBoard = pgTable("notice_board", {
-	id: serial().primaryKey().notNull(),
-	organizationId: integer("organization_id"),
-	branchId: integer("branch_id"),
-	title: varchar({ length: 255 }).notNull(),
-	content: text().notNull(),
-	noticeType: varchar("notice_type", { length: 64 }).notNull(),
-	priorityLevel: varchar("priority_level", { length: 32 }).default('NORMAL').notNull(),
-	targetAudience: text("target_audience").array().default([]),
-	targetGrades: integer("target_grades").array().default([]),
-	targetSections: integer("target_sections").array().default([]),
-	isUrgent: boolean("is_urgent").default(false).notNull(),
-	isPublished: boolean("is_published").default(false).notNull(),
-	publishDate: timestamp("publish_date", { precision: 6, mode: 'string' }),
-	expiryDate: timestamp("expiry_date", { precision: 6, mode: 'string' }),
-	attachments: json(),
-	authorId: integer("author_id"),
-	approvedBy: integer("approved_by"),
-	approvedAt: timestamp("approved_at", { precision: 6, mode: 'string' }),
-	readCount: integer("read_count").default(0).notNull(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("idx_notice_board_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
-	index("idx_notice_board_priority").using("btree", table.priorityLevel.asc().nullsLast().op("text_ops")),
-	index("idx_notice_board_publish_date").using("btree", table.publishDate.asc().nullsLast().op("timestamp_ops")),
-	index("idx_notice_board_published").using("btree", table.isPublished.asc().nullsLast().op("bool_ops")),
-	index("idx_notice_board_type").using("btree", table.noticeType.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "notice_board_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "notice_board_organization_id_organizations_id_fk"
-		}),
-]);
-
-export const enrollments = pgTable("enrollments", {
-	id: serial().primaryKey().notNull(),
-	studentId: integer("student_id").notNull(),
-	branchId: integer("branch_id").notNull(),
-	gradeId: integer("grade_id").notNull(),
-	sectionId: integer("section_id"),
-	academicYearId: integer("academic_year_id").notNull(),
-	rollNumber: integer("roll_number"),
-	status: varchar({ length: 64 }).default('ENROLLED').notNull(),
-	enrolledAt: timestamp("enrolled_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	leftAt: timestamp("left_at", { precision: 6, mode: 'string' }),
-	isDeleted: boolean("is_deleted").default(false).notNull(),
-	meta: json(),
-}, (table) => [
-	index("idx_enrollments_branch_year").using("btree", table.branchId.asc().nullsLast().op("int4_ops"), table.academicYearId.asc().nullsLast().op("int4_ops")),
-	uniqueIndex("uq_student_academic_year").using("btree", table.studentId.asc().nullsLast().op("int4_ops"), table.academicYearId.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.academicYearId],
-			foreignColumns: [academicYears.id],
-			name: "enrollments_academic_year_id_academic_years_id_fk"
-		}),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "enrollments_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.gradeId],
-			foreignColumns: [grades.id],
-			name: "enrollments_grade_id_grades_id_fk"
-		}),
-	foreignKey({
-			columns: [table.sectionId],
-			foreignColumns: [sections.id],
-			name: "enrollments_section_id_sections_id_fk"
-		}),
-	foreignKey({
-			columns: [table.studentId],
-			foreignColumns: [students.id],
-			name: "enrollments_student_id_students_id_fk"
-		}),
-]);
-
 export const studentParents = pgTable("student_parents", {
 	id: serial().primaryKey().notNull(),
 	studentId: integer("student_id").notNull(),
@@ -765,31 +822,6 @@ export const studentParents = pgTable("student_parents", {
 			columns: [table.studentId],
 			foreignColumns: [students.id],
 			name: "student_parents_student_id_students_id_fk"
-		}),
-]);
-
-export const classTeachers = pgTable("class_teachers", {
-	id: serial().primaryKey().notNull(),
-	staffId: integer("staff_id").notNull(),
-	gradeId: integer("grade_id").notNull(),
-	sectionId: integer("section_id").notNull(),
-	academicYear: varchar("academic_year", { length: 32 }).notNull(),
-}, (table) => [
-	uniqueIndex("uq_class_teacher_section_year").using("btree", table.sectionId.asc().nullsLast().op("int4_ops"), table.academicYear.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.gradeId],
-			foreignColumns: [grades.id],
-			name: "class_teachers_grade_id_grades_id_fk"
-		}),
-	foreignKey({
-			columns: [table.sectionId],
-			foreignColumns: [sections.id],
-			name: "class_teachers_section_id_sections_id_fk"
-		}),
-	foreignKey({
-			columns: [table.staffId],
-			foreignColumns: [staff.id],
-			name: "class_teachers_staff_id_staff_id_fk"
 		}),
 ]);
 
@@ -928,40 +960,6 @@ export const exams = pgTable("exams", {
 		}),
 ]);
 
-export const examSchedule = pgTable("exam_schedule", {
-	id: serial().primaryKey().notNull(),
-	examId: integer("exam_id").notNull(),
-	gradeId: integer("grade_id").notNull(),
-	sectionId: integer("section_id"),
-	subjectId: integer("subject_id").notNull(),
-	date: timestamp({ precision: 6, mode: 'string' }).notNull(),
-	startTime: varchar("start_time", { length: 16 }),
-	endTime: varchar("end_time", { length: 16 }),
-}, (table) => [
-	index("idx_exam_schedule_date").using("btree", table.date.asc().nullsLast().op("timestamp_ops")),
-	uniqueIndex("uq_exam_schedule").using("btree", table.examId.asc().nullsLast().op("int4_ops"), table.gradeId.asc().nullsLast().op("int4_ops"), table.sectionId.asc().nullsLast().op("int4_ops"), table.subjectId.asc().nullsLast().op("int4_ops"), table.date.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.examId],
-			foreignColumns: [exams.id],
-			name: "exam_schedule_exam_id_exams_id_fk"
-		}),
-	foreignKey({
-			columns: [table.gradeId],
-			foreignColumns: [grades.id],
-			name: "exam_schedule_grade_id_grades_id_fk"
-		}),
-	foreignKey({
-			columns: [table.sectionId],
-			foreignColumns: [sections.id],
-			name: "exam_schedule_section_id_sections_id_fk"
-		}),
-	foreignKey({
-			columns: [table.subjectId],
-			foreignColumns: [subjects.id],
-			name: "exam_schedule_subject_id_subjects_id_fk"
-		}),
-]);
-
 export const marks = pgTable("marks", {
 	id: serial().primaryKey().notNull(),
 	examId: integer("exam_id").notNull(),
@@ -1022,46 +1020,6 @@ export const feeTypes = pgTable("fee_types", {
 			columns: [table.organizationId],
 			foreignColumns: [organizations.id],
 			name: "fee_types_organization_id_organizations_id_fk"
-		}),
-]);
-
-export const feeItems = pgTable("fee_items", {
-	id: serial().primaryKey().notNull(),
-	organizationId: integer("organization_id").notNull(),
-	branchId: integer("branch_id"),
-	feeTypeId: integer("fee_type_id").notNull(),
-	academicYearId: integer("academic_year_id").notNull(),
-	name: varchar({ length: 255 }).notNull(),
-	amountPaise: integer("amount_paise").notNull(),
-	isMandatory: boolean("is_mandatory").default(true).notNull(),
-	enabledGrades: integer("enabled_grades").array().default([]),
-	isDeleted: boolean("is_deleted").default(false).notNull(),
-	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("idx_fee_items_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
-	index("idx_fee_items_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
-	index("idx_fee_items_type").using("btree", table.feeTypeId.asc().nullsLast().op("int4_ops")),
-	index("idx_fee_items_year").using("btree", table.academicYearId.asc().nullsLast().op("int4_ops")),
-	uniqueIndex("uq_fee_item_org_branch_type_year_name").using("btree", table.organizationId.asc().nullsLast().op("int4_ops"), table.branchId.asc().nullsLast().op("int4_ops"), table.feeTypeId.asc().nullsLast().op("int4_ops"), table.academicYearId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.academicYearId],
-			foreignColumns: [academicYears.id],
-			name: "fee_items_academic_year_id_academic_years_id_fk"
-		}),
-	foreignKey({
-			columns: [table.branchId],
-			foreignColumns: [branches.id],
-			name: "fee_items_branch_id_branches_id_fk"
-		}),
-	foreignKey({
-			columns: [table.feeTypeId],
-			foreignColumns: [feeTypes.id],
-			name: "fee_items_fee_type_id_fee_types_id_fk"
-		}),
-	foreignKey({
-			columns: [table.organizationId],
-			foreignColumns: [organizations.id],
-			name: "fee_items_organization_id_organizations_id_fk"
 		}),
 ]);
 
@@ -1333,5 +1291,98 @@ export const files = pgTable("files", {
 			columns: [table.uploadedBy],
 			foreignColumns: [users.id],
 			name: "files_uploaded_by_users_id_fk"
+		}),
+]);
+
+export const classTeachers = pgTable("class_teachers", {
+	id: serial().primaryKey().notNull(),
+	staffId: integer("staff_id").notNull(),
+	sectionId: integer("section_id").notNull(),
+	academicYear: varchar("academic_year", { length: 32 }).notNull(),
+	classId: integer("class_id").notNull(),
+}, (table) => [
+	uniqueIndex("uq_class_teacher_section_year").using("btree", table.sectionId.asc().nullsLast().op("int4_ops"), table.academicYear.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.classId],
+			foreignColumns: [classes.id],
+			name: "class_teachers_class_id_classes_id_fk"
+		}),
+	foreignKey({
+			columns: [table.sectionId],
+			foreignColumns: [sections.id],
+			name: "class_teachers_section_id_sections_id_fk"
+		}),
+	foreignKey({
+			columns: [table.staffId],
+			foreignColumns: [staff.id],
+			name: "class_teachers_staff_id_staff_id_fk"
+		}),
+]);
+
+export const examSchedule = pgTable("exam_schedule", {
+	id: serial().primaryKey().notNull(),
+	examId: integer("exam_id").notNull(),
+	sectionId: integer("section_id"),
+	subjectId: integer("subject_id").notNull(),
+	date: timestamp({ precision: 6, mode: 'string' }).notNull(),
+	startTime: varchar("start_time", { length: 16 }),
+	endTime: varchar("end_time", { length: 16 }),
+	classId: integer("class_id").notNull(),
+}, (table) => [
+	index("idx_exam_schedule_date").using("btree", table.date.asc().nullsLast().op("timestamp_ops")),
+	uniqueIndex("uq_exam_schedule").using("btree", table.examId.asc().nullsLast().op("int4_ops"), table.classId.asc().nullsLast().op("int4_ops"), table.sectionId.asc().nullsLast().op("int4_ops"), table.subjectId.asc().nullsLast().op("int4_ops"), table.date.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.classId],
+			foreignColumns: [classes.id],
+			name: "exam_schedule_class_id_classes_id_fk"
+		}),
+	foreignKey({
+			columns: [table.examId],
+			foreignColumns: [exams.id],
+			name: "exam_schedule_exam_id_exams_id_fk"
+		}),
+	foreignKey({
+			columns: [table.sectionId],
+			foreignColumns: [sections.id],
+			name: "exam_schedule_section_id_sections_id_fk"
+		}),
+	foreignKey({
+			columns: [table.subjectId],
+			foreignColumns: [subjects.id],
+			name: "exam_schedule_subject_id_subjects_id_fk"
+		}),
+]);
+
+export const feeItems = pgTable("fee_items", {
+	id: serial().primaryKey().notNull(),
+	organizationId: integer("organization_id").notNull(),
+	branchId: integer("branch_id"),
+	feeTypeId: integer("fee_type_id").notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	amountPaise: integer("amount_paise").notNull(),
+	isMandatory: boolean("is_mandatory").default(true).notNull(),
+	isDeleted: boolean("is_deleted").default(false).notNull(),
+	createdAt: timestamp("created_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	enabledClasses: integer("enabled_classes").array().default([]),
+	updatedAt: timestamp("updated_at", { precision: 6, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("idx_fee_items_branch").using("btree", table.branchId.asc().nullsLast().op("int4_ops")),
+	index("idx_fee_items_deleted").using("btree", table.isDeleted.asc().nullsLast().op("bool_ops")),
+	index("idx_fee_items_type").using("btree", table.feeTypeId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("uq_fee_item_org_branch_type_name").using("btree", table.organizationId.asc().nullsLast().op("int4_ops"), table.branchId.asc().nullsLast().op("int4_ops"), table.feeTypeId.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.branchId],
+			foreignColumns: [branches.id],
+			name: "fee_items_branch_id_branches_id_fk"
+		}),
+	foreignKey({
+			columns: [table.feeTypeId],
+			foreignColumns: [feeTypes.id],
+			name: "fee_items_fee_type_id_fee_types_id_fk"
+		}),
+	foreignKey({
+			columns: [table.organizationId],
+			foreignColumns: [organizations.id],
+			name: "fee_items_organization_id_organizations_id_fk"
 		}),
 ]);

@@ -1,6 +1,6 @@
-import { eq, and, sql, inArray, isNull } from 'drizzle-orm';
+import { eq, and, sql, inArray, isNull, or } from 'drizzle-orm';
 import db from '../db/index.js';
-import { subjects, branches, staff, subjectAssignments, organizations, sections } from '../db/schema.js';
+import { subjects, branches, staff, subjectAssignments, organizations, sections, personDetails } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
 export interface CreateSubjectData {
@@ -61,7 +61,7 @@ export class SubjectService {
               INNER JOIN ${staff} s ON sa.staff_id = s.id
               WHERE sa.subject_id = ${subjects.id} 
               AND s.branch_id = ${options.branchId}
-              AND s.is_deleted = false
+              AND s.is_active = true
               AND s.employee_type = 'TEACHER'
             )`.as('teacherCount')
           } : {})
@@ -79,16 +79,18 @@ export class SubjectService {
           const subjectTeachersData = await db.select({
             subjectId: subjectAssignments.subjectId,
             teacherId: staff.id,
-            teacherName: staff.firstName,
-            teacherLastName: staff.lastName,
-            teacherEmail: staff.email,
+            teacherName: personDetails.firstName,
+            teacherLastName: personDetails.lastName,
+            teacherEmail: personDetails.email,
           })
             .from(subjectAssignments)
             .innerJoin(staff, and(
               eq(subjectAssignments.staffId, staff.id),
               eq(staff.branchId, options.branchId),
-              eq(staff.employeeType, 'TEACHER')
+              eq(staff.employeeType, 'TEACHER'),
+              eq(staff.isActive, true)
             ))
+            .innerJoin(personDetails, eq(staff.personDetailId, personDetails.id))
             .where(inArray(subjectAssignments.subjectId, subjectIds));
 
           // Group teachers by subject
@@ -133,7 +135,7 @@ export class SubjectService {
               SELECT COUNT(DISTINCT sa.staff_id) FROM ${subjectAssignments} sa
               INNER JOIN ${staff} s ON sa.staff_id = s.id
               WHERE sa.subject_id = ${subjects.id}
-              AND s.is_deleted = false
+              AND s.is_active = true
               AND s.employee_type = 'TEACHER'
             )`.as('teacherCount'),
             branchCount: sql<number>`(
@@ -155,16 +157,18 @@ export class SubjectService {
           const subjectTeachersData = await db.select({
             subjectId: subjectAssignments.subjectId,
             teacherId: staff.id,
-            teacherName: staff.firstName,
-            teacherLastName: staff.lastName,
-            teacherEmail: staff.email
+            teacherName: personDetails.firstName,
+            teacherLastName: personDetails.lastName,
+            teacherEmail: personDetails.email
           })
             .from(subjectAssignments)
             .innerJoin(staff, eq(subjectAssignments.staffId, staff.id))
+            .innerJoin(personDetails, eq(staff.personDetailId, personDetails.id))
             .where(
               and(
                 inArray(subjectAssignments.subjectId, subjectIds),
-                eq(staff.employeeType, 'TEACHER')
+                eq(staff.employeeType, 'TEACHER'),
+                eq(staff.isActive, true)
               )
             );
 
@@ -440,9 +444,9 @@ export class SubjectService {
         subjectCode: subjects.code,
         subjectShortName: subjects.shortName,
         // Teacher info
-        teacherName: staff.firstName,
-        teacherLastName: staff.lastName,
-        teacherEmail: staff.email,
+        teacherName: personDetails.firstName,
+        teacherLastName: personDetails.lastName,
+        teacherEmail: personDetails.email,
         // Section info
         sectionName: sections.name,
         sectionCapacity: sections.capacity
@@ -450,12 +454,14 @@ export class SubjectService {
         .from(subjectAssignments)
         .innerJoin(subjects, eq(subjectAssignments.subjectId, subjects.id))
         .innerJoin(staff, eq(subjectAssignments.staffId, staff.id))
+        .innerJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .innerJoin(sections, eq(subjectAssignments.sectionId, sections.id))
         .where(and(
           eq(staff.branchId, branchId),
           eq(sections.branchId, branchId),
           eq(subjects.isDeleted, false),
           eq(staff.employeeType, 'TEACHER'),
+          eq(staff.isActive, true),
           eq(sections.isDeleted, false)
         ))
         .orderBy(subjects.name, sections.name);
@@ -544,34 +550,127 @@ export class SubjectService {
     }
   }
 
-  static async restore(id: number, userBranchId?: number): Promise<ServiceResponse<any>> {
+  static async restore(id: number, organizationId?: number): Promise<ServiceResponse<any>> {
     try {
-      // For organization-level subjects, check if user has permission
-      if (userBranchId) {
-        const existing = await db.select({ organizationId: subjects.organizationId })
-          .from(subjects)
-          .where(and(eq(subjects.id, id), eq(subjects.isDeleted, true)))
-          .limit(1);
+      console.log('Restoring subject with ID:', id);
+      
+      // First get the subject to check if it exists and get organization info
+      const subjectResult = await db.select({
+        id: subjects.id,
+        name: subjects.name,
+        organizationId: subjects.organizationId,
+        isDeleted: subjects.isDeleted,
+        isPrivate: subjects.isPrivate
+      })
+      .from(subjects)
+      .where(eq(subjects.id, id))
+      .limit(1);
 
-        if (existing.length === 0) {
-          return { success: false, error: 'Subject not found' };
+      if (subjectResult.length === 0) {
+        return {
+          success: false,
+          error: 'Subject not found'
+        };
+      }
+
+      const subject = subjectResult[0];
+      console.log('Subject found:', subject);
+      if(!subject?.isDeleted) {
+        return {
+          success: false,
+          error: 'Subject is not deleted'
+        };
+      }
+
+      // For private subjects, they must be deleted to restore
+      if (subject.isPrivate && subject.organizationId) {
+        if (!subject.isDeleted) {
+          return {
+            success: false,
+            error: 'Private subject is not deleted'
+          };
+        }
+        
+        // Check for name conflicts
+        const existingSubject = await db.select()
+          .from(subjects)
+          .where(and(
+            eq(subjects.name, subject.name),
+            eq(subjects.organizationId, subject.organizationId),
+            eq(subjects.isDeleted, false)
+          ))
+          .limit(1);
+          
+        if (existingSubject.length > 0) {
+          return {
+            success: false,
+            error: 'A subject with this name already exists in the organization'
+          };
         }
       }
 
-      const result = await db.update(subjects)
-        .set({ isDeleted: false })
-        .where(eq(subjects.id, id))
-        .returning();
-
-      if (result.length === 0) {
-        return { success: false, error: 'Subject not found' };
+      // For global subjects, we need organizationId to add them back to enabled list
+      if (!subject.isPrivate && !organizationId) {
+        return {
+          success: false,
+          error: 'Organization ID is required to restore global subject'
+        };
       }
+
+      // Use transaction to restore subject and add to enabled list
+      const result = await db.transaction(async (tx) => {
+        let restoredSubject = subject;
+        
+        // Step 1: For private subjects, restore the subject (set isDeleted = false)
+        if (subject.isPrivate && subject.organizationId && subject.isDeleted) {
+          const restored = await tx.update(subjects)
+            .set({ 
+              isDeleted: false
+            })
+            .where(eq(subjects.id, id))
+            .returning();
+
+          console.log('Private subject restored:', restored[0]);
+          if (restored[0]) {
+            restoredSubject = restored[0];
+          }
+        }
+
+        // Step 2: Add subject back to organization's enabled list
+        const targetOrgId = organizationId || subject.organizationId;
+        if (targetOrgId) {
+          const orgResult = await tx.select({ enabledSubjects: organizations.enabledSubjects })
+            .from(organizations)
+            .where(eq(organizations.id, targetOrgId))
+            .limit(1);
+
+          if (orgResult && orgResult[0]) {
+            const currentEnabled = orgResult[0].enabledSubjects || [];
+            
+            // Only add if not already in enabled list
+            if (!currentEnabled.includes(id)) {
+              const newEnabled = [...currentEnabled, id];
+              
+              await tx.update(organizations)
+                .set({ enabledSubjects: newEnabled })
+                .where(eq(organizations.id, targetOrgId));
+                
+              console.log('Added subject to enabled list for organization:', targetOrgId);
+            } else {
+              console.log('Subject already in enabled list');
+            }
+          }
+        }
+
+        return restoredSubject;
+      });
 
       return {
         success: true,
-        data: result[0]
+        data: result
       };
     } catch (error: any) {
+      console.error('Error in restore (subjects):', error);
       return {
         success: false,
         error: error.message || 'Failed to restore subject'
@@ -582,6 +681,8 @@ export class SubjectService {
   // Get enabled subjects for an organization (both global and private)
   static async getEnabledForOrganization(organizationId: number): Promise<ServiceResponse<any[]>> {
     try {
+      console.log('getEnabledForOrganization (subjects) called with organizationId:', organizationId);
+      
       // First get the organization's enabled subjects list
       const orgResult = await db.select({ enabledSubjects: organizations.enabledSubjects })
         .from(organizations)
@@ -596,15 +697,27 @@ export class SubjectService {
       }
 
       const enabledIds = orgResult[0].enabledSubjects || [];
-
-      if (enabledIds.length === 0) {
-        return {
-          success: true,
-          data: []
-        };
+      console.log('Enabled subject IDs:', enabledIds);
+      
+      // Include ALL subjects that either:
+      // 1. Are in the enabled list (global + enabled private subjects)
+      // 2. OR belong to this organization (all org subjects including deleted ones)
+      const conditions = [];
+      
+      // Add enabled subjects condition
+      if (enabledIds.length > 0) {
+        conditions.push(inArray(subjects.id, enabledIds));
+        console.log('Added condition for enabled subjects');
       }
+      
+      // Add organization-owned subjects condition (including deleted ones)
+      conditions.push(eq(subjects.organizationId, organizationId));
+      console.log('Added condition for ALL organization subjects');
+      
+      // Use OR to combine both conditions
+      const finalCondition = conditions.length > 1 ? or(...conditions) : conditions[0];
+      console.log('Using OR condition to combine enabled + organization subjects');
 
-      // Get all enabled subjects (global and private ones for this org)
       const result = await db.select({
         id: subjects.id,
         name: subjects.name,
@@ -612,22 +725,24 @@ export class SubjectService {
         shortName: subjects.shortName,
         organizationId: subjects.organizationId,
         isPrivate: subjects.isPrivate,
+        isDeleted: subjects.isDeleted,
         createdAt: subjects.createdAt,
         organizationName: organizations.name,
       })
         .from(subjects)
         .leftJoin(organizations, eq(subjects.organizationId, organizations.id))
-        .where(and(
-          inArray(subjects.id, enabledIds),
-          eq(subjects.isDeleted, false)
-        ))
-        .orderBy(subjects.name);
+        .where(finalCondition)
+        .orderBy(subjects.isDeleted, subjects.name);
+
+      console.log('Query result (subjects):', result.length, 'subjects found');
+      console.log('Result preview (subjects):', result.map(s => ({ id: s.id, name: s.name, isDeleted: s.isDeleted, organizationId: s.organizationId })));
 
       return {
         success: true,
         data: result
       };
     } catch (error: any) {
+      console.error('Error in getEnabledForOrganization (subjects):', error);
       return {
         success: false,
         error: error.message || 'Failed to fetch enabled subjects'
@@ -709,6 +824,9 @@ export class SubjectService {
       }
 
       const subject = subjectResult.data;
+      if (!subject) {
+        return { success: false, error: 'Subject not found' };
+      }
       const isPrivate = subject.organizationId !== null;
       
       // Check if subject is currently used by any subject assignments (teacher assignments)

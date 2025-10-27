@@ -1,15 +1,17 @@
+import { Address } from 'cluster';
 import db from '../db/index.js';
-import { 
-  students, 
-  staff, 
-  departments, 
-  subjects, 
-  branches, 
-  organizations, 
-  users, 
+import {
+  students,
+  staff,
+  departments,
+  subjects,
+  branches,
+  organizations,
+  users,
   feeInvoices,
-  grades,
-  enrollments
+  classes,
+  enrollments,
+  addresses
 } from '../db/schema.js';
 import { eq, and, count, sql, sum } from 'drizzle-orm';
 
@@ -31,7 +33,7 @@ export interface OrganizationStats {
     totalStaff: number;
     totalTeachers: number;
     totalDepartments: number;
-    totalGrades: number;
+    totalClasses: number;
     totalSubjects: number;
     totalUsers: number;
     activeBranches: number;
@@ -40,7 +42,7 @@ export interface OrganizationStats {
     studentsPerBranch: { branchName: string; count: number }[];
     staffPerBranch: { branchName: string; count: number }[];
     departmentsPerBranch: { branchName: string; count: number }[];
-    gradesPerBranch: { branchName: string; count: number }[];
+    classesPerBranch: { branchName: string; count: number }[];
   };
   academic: {
     subjectsOffered: number;
@@ -72,14 +74,14 @@ export interface BranchStats {
     name: string;
     organizationName: string;
     establishedDate?: string;
-    address?: string;
+    address?: any;
   };
   overview: {
     totalStudents: number;
     totalStaff: number;
     totalTeachers: number;
     totalDepartments: number;
-    totalGrades: number;
+    totalclasses: number;
     totalSubjects: number;
     totalUsers: number;
   };
@@ -148,7 +150,7 @@ export class StatisticsService {
         totalStaffResult,
         totalTeachersResult,
         totalDepartmentsResult,
-        totalGradesResult,
+        totalClassesResult,
         totalSubjectsResult,
         totalUsersResult,
         activeBranchesResult
@@ -157,7 +159,7 @@ export class StatisticsService {
         db.select({ count: count() }).from(staff).where(and(eq(staff.organizationId, organizationId), eq(staff.employeeType, 'STAFF'))),
         db.select({ count: count() }).from(staff).where(and(eq(staff.organizationId, organizationId), eq(staff.employeeType, 'TEACHER'))),
         db.select({ count: count() }).from(departments).where(eq(departments.organizationId, organizationId)),
-        db.select({ count: count() }).from(grades).innerJoin(branches, eq(grades.branchId, branches.id)).where(eq(branches.organizationId, organizationId)),
+        db.select({ count: count() }).from(classes).innerJoin(branches, eq(classes.branchId, branches.id)).where(eq(branches.organizationId, organizationId)),
         db.select({ count: count() }).from(subjects).where(eq(subjects.organizationId, organizationId)),
         db.select({ count: count() }).from(users).where(eq(users.organizationId, organizationId)),
         db.select({ count: count() }).from(branches).where(and(eq(branches.organizationId, organizationId), eq(branches.status, 'ACTIVE')))
@@ -194,20 +196,20 @@ export class StatisticsService {
         .where(eq(departments.organizationId, organizationId))
         .groupBy(branches.id, branches.name);
 
-      const gradesPerBranch = await db
+      const classesPerBranch = await db
         .select({
           branchName: branches.name,
-          count: count(grades.id)
+          count: count(classes.id)
         })
-        .from(grades)
-        .leftJoin(branches, eq(grades.branchId, branches.id))
+        .from(classes)
+        .leftJoin(branches, eq(classes.branchId, branches.id))
         .where(eq(branches.organizationId, organizationId))
         .groupBy(branches.id, branches.name);
 
       // Calculate academic stats
       const totalStudentCount = totalStudentsResult[0]?.count || 0;
       const totalTeacherCount = totalTeachersResult[0]?.count || 0;
-      const teacherToStudentRatio = totalTeacherCount > 0 
+      const teacherToStudentRatio = totalTeacherCount > 0
         ? `1:${Math.round(totalStudentCount / totalTeacherCount)}`
         : '0:0';
 
@@ -259,11 +261,15 @@ export class StatisticsService {
         newBranchesThisYear: 0
       };
 
+      if (!org) {
+        throw new Error('Organization not found');
+      }
+
       const stats: OrganizationStats = {
         organization: {
-          id: org.id,
+          id: organizationId,
           name: org.name,
-          establishedDate: org.establishedDate || undefined,
+          establishedDate: org.establishedDate,
           totalBranches: totalBranches[0]?.count || 0
         },
         overview: {
@@ -271,7 +277,7 @@ export class StatisticsService {
           totalStaff: totalStaffResult[0]?.count || 0,
           totalTeachers: totalTeacherCount,
           totalDepartments: totalDepartmentsResult[0]?.count || 0,
-          totalGrades: totalGradesResult[0]?.count || 0,
+          totalClasses: totalClassesResult[0]?.count || 0,
           totalSubjects: totalSubjectsResult[0]?.count || 0,
           totalUsers: totalUsersResult[0]?.count || 0,
           activeBranches: activeBranchesResult[0]?.count || 0
@@ -280,11 +286,11 @@ export class StatisticsService {
           studentsPerBranch: studentsPerBranch.map((s: any) => ({ branchName: s.branchName || 'Unknown', count: s.count })),
           staffPerBranch: staffPerBranch.map((s: any) => ({ branchName: s.branchName || 'Unknown', count: s.count })),
           departmentsPerBranch: departmentsPerBranch.map((d: any) => ({ branchName: d.branchName || 'Unknown', count: d.count })),
-          gradesPerBranch: gradesPerBranch.map((g: any) => ({ branchName: g.branchName || 'Unknown', count: g.count }))
+          classesPerBranch: classesPerBranch.map((g: any) => ({ branchName: g.branchName || 'Unknown', count: g.count }))
         },
         academic: {
           subjectsOffered: totalSubjectsResult[0]?.count || 0,
-          averageEnrollment: totalStudentCount > 0 ? Math.round(totalStudentCount / (totalGradesResult[0]?.count || 1)) : 0,
+          averageEnrollment: totalStudentCount > 0 ? Math.round(totalStudentCount / (totalClassesResult[0]?.count || 1)) : 0,
           teacherToStudentRatio,
           departmentUtilization: departmentUtilization.map((d: any) => ({
             departmentName: d.departmentName,
@@ -313,10 +319,19 @@ export class StatisticsService {
           name: branches.name,
           organizationName: organizations.name,
           establishedDate: branches.createdAt,
-          address: branches.address
+          address: {
+            id: addresses.id,
+            addressLine1: addresses.addressLine1,
+            addressLine2: addresses.addressLine2 || '',
+            cityVillage: addresses.cityVillage || '',
+            state: addresses.state || '',
+            country: addresses.country || '',
+            pincode: addresses.pincode || ''
+          }
         })
         .from(branches)
         .leftJoin(organizations, eq(branches.organizationId, organizations.id))
+        .leftJoin(addresses, eq(branches.addressId, addresses.id))
         .where(eq(branches.id, branchId))
         .limit(1);
 
@@ -326,13 +341,17 @@ export class StatisticsService {
 
       const branchInfo = branch[0];
 
+      if (!branchInfo) {
+        return { success: false, error: 'Branch not found' };
+      }
+
       // Get overview stats
       const [
         totalStudentsResult,
         totalStaffResult,
         totalTeachersResult,
         totalDepartmentsResult,
-        totalGradesResult,
+        totalClassesResult,
         totalSubjectsResult,
         totalUsersResult
       ] = await Promise.all([
@@ -340,7 +359,7 @@ export class StatisticsService {
         db.select({ count: count() }).from(staff).where(and(eq(staff.branchId, branchId), eq(staff.employeeType, 'STAFF'))),
         db.select({ count: count() }).from(staff).where(and(eq(staff.branchId, branchId), eq(staff.employeeType, 'TEACHER'))),
         db.select({ count: count() }).from(departments).where(eq(departments.branchId, branchId)),
-        db.select({ count: count() }).from(grades).where(eq(grades.branchId, branchId)),
+        db.select({ count: count() }).from(classes).where(eq(classes.branchId, branchId)),
         db.select({ count: count() }).from(subjects).innerJoin(branches, eq(branches.id, branchId)).where(eq(subjects.organizationId, branches.organizationId)),
         db.select({ count: count() }).from(users).where(eq(users.branchId, branchId))
       ]);
@@ -348,13 +367,13 @@ export class StatisticsService {
       // Get grade distribution
       const gradeDistribution = await db
         .select({
-          gradeName: grades.name,
+          gradeName: classes.name,
           studentCount: count(enrollments.id)
         })
-        .from(grades)
-        .leftJoin(enrollments, eq(enrollments.gradeId, grades.id))
-        .where(and(eq(grades.branchId, branchId), eq(enrollments.isActive, true)))
-        .groupBy(grades.id, grades.name);
+        .from(classes)
+        .leftJoin(enrollments, eq(enrollments.classId, classes.id))
+        .where(and(eq(classes.branchId, branchId), eq(enrollments.isDeleted, false)))
+        .groupBy(classes.id, classes.name);
 
       // Get department distribution
       const departmentDistribution = await db
@@ -370,11 +389,11 @@ export class StatisticsService {
       // Calculate academic ratios
       const totalStudentCount = totalStudentsResult[0]?.count || 0;
       const totalTeacherCount = totalTeachersResult[0]?.count || 0;
-      const teacherToStudentRatio = totalTeacherCount > 0 
+      const teacherToStudentRatio = totalTeacherCount > 0
         ? `1:${Math.round(totalStudentCount / totalTeacherCount)}`
         : '0:0';
 
-      const averageEnrollment = gradeDistribution.length > 0 
+      const averageEnrollment = gradeDistribution.length > 0
         ? Math.round(gradeDistribution.reduce((sum: number, g: any) => sum + g.studentCount, 0) / gradeDistribution.length)
         : 0;
 
@@ -393,20 +412,22 @@ export class StatisticsService {
       const pendingFees = Number(feeStats[0]?.pendingFees || 0);
       const collectionRate = totalFees > 0 ? `${Math.round((paidFees / totalFees) * 100)}%` : '0%';
 
+
+
       const stats: BranchStats = {
         branch: {
           id: branchInfo.id,
           name: branchInfo.name,
           organizationName: branchInfo.organizationName || 'Unknown',
-          establishedDate: branchInfo.establishedDate || undefined,
-          address: branchInfo.address || undefined
+          establishedDate: branchInfo.establishedDate,
+          address: branchInfo?.address,
         },
         overview: {
           totalStudents: totalStudentCount,
           totalStaff: totalStaffResult[0]?.count || 0,
           totalTeachers: totalTeacherCount,
           totalDepartments: totalDepartmentsResult[0]?.count || 0,
-          totalGrades: totalGradesResult[0]?.count || 0,
+          totalclasses: totalClassesResult[0]?.count || 0,
           totalSubjects: totalSubjectsResult[0]?.count || 0,
           totalUsers: totalUsersResult[0]?.count || 0
         },
@@ -487,7 +508,7 @@ export class StatisticsService {
 | **Total Staff** | ${orgStats.overview.totalStaff.toLocaleString()} |
 | **Total Teachers** | ${orgStats.overview.totalTeachers.toLocaleString()} |
 | **Total Departments** | ${orgStats.overview.totalDepartments.toLocaleString()} |
-| **Total Grades** | ${orgStats.overview.totalGrades.toLocaleString()} |
+| **Total Classes** | ${orgStats.overview.totalClasses.toLocaleString()} |
 | **Total Subjects** | ${orgStats.overview.totalSubjects.toLocaleString()} |
 | **Active Branches** | ${orgStats.overview.activeBranches.toLocaleString()} |
 | **Total Users** | ${orgStats.overview.totalUsers.toLocaleString()} |
@@ -514,9 +535,9 @@ ${orgStats.demographics.departmentsPerBranch.map(b => `- **${b.branchName}**: ${
 - **Teacher to Student Ratio**: ${orgStats.academic.teacherToStudentRatio}
 
 ### Department Utilization
-${orgStats.academic.departmentUtilization.map(d => 
-  `- **${d.departmentName}**: ${d.staffCount} staff, ${d.studentCount} students`
-).join('\n')}
+${orgStats.academic.departmentUtilization.map(d =>
+        `- **${d.departmentName}**: ${d.staffCount} staff, ${d.studentCount} students`
+      ).join('\n')}
 
 ---
 
@@ -563,7 +584,7 @@ ${orgStats.academic.departmentUtilization.map(d =>
 | **Total Staff** | ${branchStats.overview.totalStaff.toLocaleString()} |
 | **Total Teachers** | ${branchStats.overview.totalTeachers.toLocaleString()} |
 | **Total Departments** | ${branchStats.overview.totalDepartments.toLocaleString()} |
-| **Total Grades** | ${branchStats.overview.totalGrades.toLocaleString()} |
+| **Total classes** | ${branchStats.overview.totalclasses.toLocaleString()} |
 | **Total Subjects** | ${branchStats.overview.totalSubjects.toLocaleString()} |
 | **Total Users** | ${branchStats.overview.totalUsers.toLocaleString()} |
 
@@ -572,14 +593,14 @@ ${orgStats.academic.departmentUtilization.map(d =>
 ## 🎓 Academic Distribution
 
 ### Grade Distribution
-${branchStats.academic.gradeDistribution.map(g => 
-  `- **${g.gradeName}**: ${g.studentCount} students`
-).join('\n')}
+${branchStats.academic.gradeDistribution.map(g =>
+        `- **${g.gradeName}**: ${g.studentCount} students`
+      ).join('\n')}
 
 ### Department Distribution
-${branchStats.academic.departmentDistribution.map(d => 
-  `- **${d.departmentName}**: ${d.staffCount} staff members`
-).join('\n')}
+${branchStats.academic.departmentDistribution.map(d =>
+        `- **${d.departmentName}**: ${d.staffCount} staff members`
+      ).join('\n')}
 
 ### Academic Metrics
 - **Average Enrollment**: ${branchStats.academic.averageEnrollment} students per grade
@@ -593,9 +614,9 @@ ${branchStats.academic.departmentDistribution.map(d =>
 ${branchStats.staff.employeeTypes.map(e => `- **${e.type}**: ${e.count} members`).join('\n')}
 
 ### Department-wise Staff
-${branchStats.staff.departmentWiseStaff.map(d => 
-  `- **${d.departmentName}**: ${d.staffCount} staff, ${d.teacherCount} teachers`
-).join('\n')}
+${branchStats.staff.departmentWiseStaff.map(d =>
+        `- **${d.departmentName}**: ${d.staffCount} staff, ${d.teacherCount} teachers`
+      ).join('\n')}
 
 ---
 

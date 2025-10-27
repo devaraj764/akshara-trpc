@@ -146,6 +146,13 @@ export const noticeBoardRouter = router({
     .input(getNoticesSchema)
     .query(async ({ input, ctx }) => {
       try {
+        if (!ctx.user?.organizationId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'User must be associated with an organization'
+          });
+        }
+
         const result = await NoticeBoardService.getAll({
           organizationId: ctx.user.organizationId,
           branchId: input.branchId,
@@ -168,7 +175,7 @@ export const noticeBoardRouter = router({
       } catch (error: any) {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: error.message || 'Failed to fetch notices'
+          message: `Database query failed: ${error.message || 'Failed to fetch notices'}`
         });
       }
     }),
@@ -199,6 +206,13 @@ export const noticeBoardRouter = router({
     .input(z.object({ branchId: z.number().optional() }))
     .query(async ({ input, ctx }) => {
       try {
+        if (!ctx.user?.organizationId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'User must be associated with an organization'
+          });
+        }
+
         const result = await NoticeBoardService.getUrgentNotices(
           ctx.user.organizationId,
           input.branchId
@@ -224,6 +238,13 @@ export const noticeBoardRouter = router({
     .input(z.object({ branchId: z.number().optional() }))
     .query(async ({ input, ctx }) => {
       try {
+        if (!ctx.user?.organizationId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'User must be associated with an organization'
+          });
+        }
+
         const result = await NoticeBoardService.getPendingApproval(
           ctx.user.organizationId,
           input.branchId

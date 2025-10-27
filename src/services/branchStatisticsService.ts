@@ -8,11 +8,12 @@ import {
   organizations, 
   users, 
   feeInvoices,
-  grades,
+  classes,
   enrollments,
   attendance,
   sections,
-  subjectAssignments
+  subjectAssignments,
+  addresses
 } from '../db/schema.js';
 import { eq, and, count, sql, sum } from 'drizzle-orm';
 
@@ -27,15 +28,23 @@ export interface BranchStats {
     id: number;
     name: string;
     organizationName: string;
-    establishedDate?: string;
-    address?: string;
+    establishedDate?: string | undefined;
+    address?: {
+      id: number;
+      addressLine1: string;
+      addressLine2: string | undefined;
+      cityVillage: string | undefined;
+      state: string | undefined;
+      country: string | undefined;
+      pincode: string | undefined;
+    } | undefined;
   };
   overview: {
     totalStudents: number;
     totalStaff: number;
     totalTeachers: number;
     totalDepartments: number;
-    totalGrades: number;
+    totalClasses: number;
     totalSubjects: number;
     totalUsers: number;
   };
@@ -82,10 +91,19 @@ export class BranchStatisticsService {
           name: branches.name,
           organizationName: organizations.name,
           establishedDate: branches.createdAt,
-          address: branches.address
+          address: {
+            id: addresses.id,
+            addressLine1: addresses.addressLine1,
+            addressLine2: addresses.addressLine2 || '',
+            cityVillage: addresses.cityVillage || '',
+            state: addresses.state || '',
+            country: addresses.country || '',
+            pincode: addresses.pincode || ''
+          }
         })
         .from(branches)
         .leftJoin(organizations, eq(branches.organizationId, organizations.id))
+        .leftJoin(addresses, eq(branches.addressId, addresses.id))
         .where(eq(branches.id, branchId))
         .limit(1);
 
@@ -101,7 +119,7 @@ export class BranchStatisticsService {
         totalStaffResult,
         totalTeachersResult,
         totalDepartmentsResult,
-        totalGradesResult,
+        totalClassesResult,
         totalSubjectsResult,
         totalUsersResult
       ] = await Promise.all([
@@ -109,7 +127,7 @@ export class BranchStatisticsService {
         db.select({ count: count() }).from(staff).where(and(eq(staff.branchId, branchId), eq(staff.employeeType, 'STAFF'))),
         db.select({ count: count() }).from(staff).where(and(eq(staff.branchId, branchId), eq(staff.employeeType, 'TEACHER'))),
         db.select({ count: count() }).from(departments).where(eq(departments.branchId, branchId)),
-        db.select({ count: count() }).from(grades).where(eq(grades.branchId, branchId)),
+          db.select({ count: count() }).from(classes).where(eq(classes.branchId, branchId)),
         db.select({ count: count(sql`DISTINCT ${subjects.id}`) }).from(subjects)
           .innerJoin(subjectAssignments, eq(subjectAssignments.subjectId, subjects.id))
           .innerJoin(sections, eq(sections.id, subjectAssignments.sectionId))
@@ -120,13 +138,13 @@ export class BranchStatisticsService {
       // Get grade distribution
       const gradeDistribution = await db
         .select({
-          gradeName: grades.name,
+          gradeName: classes.name,
           studentCount: count(enrollments.id)
         })
-        .from(grades)
-        .leftJoin(enrollments, eq(enrollments.gradeId, grades.id))
-        .where(and(eq(grades.branchId, branchId), eq(enrollments.isDeleted, false)))
-        .groupBy(grades.id, grades.name);
+        .from(classes)
+        .leftJoin(enrollments, eq(enrollments.classId, classes.id))
+        .where(and(eq(classes.branchId, branchId), eq(enrollments.isDeleted, false)))
+        .groupBy(classes.id, classes.name);
 
       // Get department distribution
       const departmentDistribution = await db
@@ -180,15 +198,15 @@ export class BranchStatisticsService {
       // Get fee collection by grade
       const feesByGrade = await db
         .select({
-          gradeName: grades.name,
+          gradeName: classes.name,
           collected: sum(sql`CASE WHEN ${feeInvoices.status} = 'PAID' THEN ${feeInvoices.totalAmountPaise} ELSE 0 END`),
           pending: sum(sql`CASE WHEN ${feeInvoices.status} = 'PENDING' THEN ${feeInvoices.totalAmountPaise} ELSE 0 END`)
         })
         .from(feeInvoices)
         .innerJoin(enrollments, eq(feeInvoices.enrollmentId, enrollments.id))
-        .innerJoin(grades, eq(enrollments.gradeId, grades.id))
+        .innerJoin(classes, eq(enrollments.classId, classes.id))
         .where(eq(feeInvoices.branchId, branchId))
-        .groupBy(grades.id, grades.name);
+        .groupBy(classes.id, classes.name);
 
       // Get staff demographics
       const employeeTypes = [
@@ -211,16 +229,16 @@ export class BranchStatisticsService {
         branch: {
           id: branchInfo.id,
           name: branchInfo.name,
+          address: branchInfo.address,
           organizationName: branchInfo.organizationName || 'Unknown',
-          ...(branchInfo.establishedDate && { establishedDate: branchInfo.establishedDate }),
-          ...(branchInfo.address && { address: branchInfo.address })
+          ...(branchInfo.establishedDate && { establishedDate: branchInfo.establishedDate })
         },
         overview: {
           totalStudents: totalStudentCount,
           totalStaff: totalStaffResult[0]?.count || 0,
           totalTeachers: totalTeacherCount,
           totalDepartments: totalDepartmentsResult[0]?.count || 0,
-          totalGrades: totalGradesResult[0]?.count || 0,
+          totalClasses: totalClassesResult[0]?.count || 0,
           totalSubjects: totalSubjectsResult[0]?.count || 0,
           totalUsers: totalUsersResult[0]?.count || 0
         },
@@ -304,7 +322,7 @@ export class BranchStatisticsService {
 | **Total Staff** | ${stats.overview.totalStaff.toLocaleString()} |
 | **Total Teachers** | ${stats.overview.totalTeachers.toLocaleString()} |
 | **Total Departments** | ${stats.overview.totalDepartments.toLocaleString()} |
-| **Total Grades** | ${stats.overview.totalGrades.toLocaleString()} |
+| **Total classes** | ${stats.overview.totalClasses.toLocaleString()} |
 | **Total Subjects** | ${stats.overview.totalSubjects.toLocaleString()} |
 | **Total Users** | ${stats.overview.totalUsers.toLocaleString()} |
 

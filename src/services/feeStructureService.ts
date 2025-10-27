@@ -15,7 +15,7 @@ export interface CreateFeeItemData {
   name: string;
   amountPaise: number;
   isMandatory?: boolean;
-  enabledGrades?: number[];
+  enabledClasses?: number[];
   feeTypeId: number;
 }
 

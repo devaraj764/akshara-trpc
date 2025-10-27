@@ -3,6 +3,7 @@ import db from '../db/index.js';
 import {
   staffSalaries,
   staff,
+  personDetails,
   organizations,
   branches,
   users
@@ -86,9 +87,9 @@ export class StaffSalaryService {
         branchName: branches.name,
         // Include staff info if requested
         ...(options.includeStaffInfo ? {
-          staffFirstName: staff.firstName,
-          staffLastName: staff.lastName,
-          staffEmail: staff.email,
+          staffFirstName: personDetails.firstName,
+          staffLastName: personDetails.lastName,
+          staffEmail: personDetails.email,
           staffEmployeeNumber: staff.employeeNumber,
           staffPosition: staff.position,
         } : {}),
@@ -100,6 +101,7 @@ export class StaffSalaryService {
         .leftJoin(organizations, eq(staffSalaries.organizationId, organizations.id))
         .leftJoin(branches, eq(staffSalaries.branchId, branches.id))
         .leftJoin(staff, eq(staffSalaries.employeeId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .leftJoin(users, eq(staffSalaries.createdBy, users.id))
         .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
         .orderBy(desc(staffSalaries.effectiveFrom), desc(staffSalaries.createdAt));
@@ -142,9 +144,9 @@ export class StaffSalaryService {
         updatedAt: staffSalaries.updatedAt,
         organizationName: organizations.name,
         branchName: branches.name,
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
-        staffEmail: staff.email,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
+        staffEmail: personDetails.email,
         staffEmployeeNumber: staff.employeeNumber,
         staffPosition: staff.position,
         createdByUserDisplayName: users.displayName,
@@ -154,6 +156,7 @@ export class StaffSalaryService {
         .leftJoin(organizations, eq(staffSalaries.organizationId, organizations.id))
         .leftJoin(branches, eq(staffSalaries.branchId, branches.id))
         .leftJoin(staff, eq(staffSalaries.employeeId, staff.id))
+        .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
         .leftJoin(users, eq(staffSalaries.createdBy, users.id))
         .where(and(...whereConditions))
         .limit(1);
@@ -207,9 +210,9 @@ export class StaffSalaryService {
         updatedAt: staffSalaries.updatedAt,
         organizationName: organizations.name,
         branchName: branches.name,
-        staffFirstName: staff.firstName,
-        staffLastName: staff.lastName,
-        staffEmail: staff.email,
+        staffFirstName: personDetails.firstName,
+        staffLastName: personDetails.lastName,
+        staffEmail: personDetails.email,
         staffEmployeeNumber: staff.employeeNumber,
         staffPosition: staff.position
       })
@@ -248,10 +251,11 @@ export class StaffSalaryService {
           organizationId: staff.organizationId,
           branchId: staff.branchId,
           employeeType: staff.employeeType,
-          firstName: staff.firstName,
-          lastName: staff.lastName
+          firstName: personDetails.firstName,
+          lastName: personDetails.lastName
         })
           .from(staff)
+          .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
           .where(
             and(
               eq(staff.id, data.staffId),

@@ -26,7 +26,7 @@ const updateAttendanceRecordSchema = z.object({
 const getAttendanceByDateSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
   shift: z.enum(['MORNING', 'AFTERNOON', 'EVENING', 'FULL_DAY']),
-  gradeId: z.number().positive().optional(),
+  classId: z.number().positive().optional(),
   sectionId: z.number().positive().optional(),
   studentId: z.number().positive().optional(),
 });
@@ -35,13 +35,13 @@ const getAttendanceSummarySchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   shift: z.enum(['MORNING', 'AFTERNOON', 'EVENING', 'FULL_DAY']).optional(),
-  gradeId: z.number().positive().optional(),
+  classId: z.number().positive().optional(),
   sectionId: z.number().positive().optional(),
 });
 
 const getStudentsForAttendanceSchema = z.object({
   academicYearId: z.number().positive(),
-  gradeId: z.number().positive().optional(),
+  classId: z.number().positive().optional(),
   sectionId: z.number().positive().optional(),
 });
 
@@ -59,6 +59,13 @@ export const attendanceRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Branch ID is required for attendance operations',
+        });
+      }
+
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
         });
       }
 
@@ -87,6 +94,13 @@ export const attendanceRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Branch ID is required for attendance operations',
+        });
+      }
+
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
         });
       }
 
@@ -120,13 +134,20 @@ export const attendanceRouter = router({
         });
       }
 
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
+        });
+      }
+
       const result = await AttendanceService.getAttendanceByDate(
         input.date,
         input.shift,
         ctx.user.branchId,
         ctx.user.organizationId,
         {
-          gradeId: input.gradeId,
+          classId: input.classId,
           sectionId: input.sectionId,
           studentId: input.studentId,
         }
@@ -153,6 +174,13 @@ export const attendanceRouter = router({
         });
       }
 
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
+        });
+      }
+
       const result = await AttendanceService.getAttendanceSummary(
         ctx.user.branchId,
         ctx.user.organizationId,
@@ -160,7 +188,7 @@ export const attendanceRouter = router({
           startDate: input.startDate,
           endDate: input.endDate,
           shift: input.shift,
-          gradeId: input.gradeId,
+          classId: input.classId,
           sectionId: input.sectionId,
         }
       );
@@ -186,11 +214,18 @@ export const attendanceRouter = router({
         });
       }
 
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
+        });
+      }
+
       const result = await AttendanceService.getStudentsForAttendance(
         ctx.user.branchId,
         ctx.user.organizationId,
         input.academicYearId,
-        input.gradeId,
+        input.classId,
         input.sectionId
       );
 
@@ -275,6 +310,13 @@ export const attendanceRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Branch ID is required for attendance operations',
+        });
+      }
+
+      if (!ctx.user?.organizationId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Organization ID is required for attendance operations',
         });
       }
 

@@ -1,6 +1,6 @@
 import { eq, and, sql, isNull, inArray } from 'drizzle-orm';
 import db from '../db/index.js';
-import { grades, sections, branches, organizations, staff } from '../db/schema.js';
+import { classes, sections, branches, organizations, staff, personDetails } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
 export interface CreateClassData {
@@ -24,7 +24,7 @@ export interface UpdateClassData {
 }
 
 export interface CreateSectionData {
-  gradeId: number;
+  classId: number;
   name: string;
   capacity?: number | undefined;
   branchId: number;
@@ -53,45 +53,45 @@ export class ClassService {
 
   static async getAll(options: GetAllOptions = {}): Promise<ServiceResponse<any[]>> {
     try {
-      // For now, return grades from any branch within the organization
-      // In a real system, we'd need to implement organization-level grades
+      // For now, return classes from any branch within the organization
+      // In a real system, we'd need to implement organization-level classes
       let query = db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
         level: sql<string>`
           CASE 
-            WHEN ${grades.order} <= 5 THEN 'Primary'
-            WHEN ${grades.order} <= 8 THEN 'Middle School'
-            WHEN ${grades.order} <= 10 THEN 'High School'
+            WHEN ${classes.order} <= 5 THEN 'Primary'
+            WHEN ${classes.order} <= 8 THEN 'Middle School'
+            WHEN ${classes.order} <= 10 THEN 'High School'
             ELSE 'Senior Secondary'
           END
         `.as('level'),
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt,
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        createdAt: classes.createdAt,
         // Count sections if requested
         ...(options.includeSections ? {
           sectionCount: sql<number>`(
             SELECT COUNT(*) FROM ${sections} 
-            WHERE ${sections.gradeId} = ${grades.id}
+            WHERE ${sections.classId} = ${classes.id}
           )`.as('sectionCount')
         } : {})
-      }).from(grades).where(eq(grades.isDeleted, false));
+      }).from(classes).where(eq(classes.isDeleted, false));
 
       let result = await query;
 
       // If including sections, fetch them separately
       if (options.includeSections && result.length > 0) {
-        const gradeIds = result.map(r => r.id);
+        const classIds = result.map(r => r.id);
         
         const sectionsData = await db.select({
           id: sections.id,
           name: sections.name,
           capacity: sections.capacity,
-          gradeId: sections.gradeId,
+          classId: sections.classId,
           branchId: sections.branchId,
           ...(options.includeBranches ? {
             branchName: branches.name,
@@ -101,14 +101,14 @@ export class ClassService {
         .from(sections)
         .leftJoin(branches, eq(sections.branchId, branches.id))
         .where(and(
-          sql`${sections.gradeId} IN (${sql.join(gradeIds.map(id => sql`${id}`), sql`, `)})`,
+          sql`${sections.classId} IN (${sql.join(classIds.map(id => sql`${id}`), sql`, `)})`,
           eq(sections.isDeleted, false)
         ));
 
-        // Attach sections to grades
-        const enrichedResult = result.map(grade => ({
-          ...grade,
-          sections: sectionsData.filter(section => section.gradeId === grade.id).map(section => ({
+        // Attach sections to classes
+        const enrichedResult = result.map(classItem => ({
+          ...classItem,
+          sections: sectionsData.filter(section => section.classId === classItem.id).map(section => ({
             id: section.id,
             name: section.name,
             capacity: section.capacity,
@@ -121,7 +121,7 @@ export class ClassService {
             } : {})
           })),
           _count: {
-            sections: sectionsData.filter(section => section.gradeId === grade.id).length
+            sections: sectionsData.filter(section => section.classId === classItem.id).length
           }
         }));
 
@@ -129,10 +129,10 @@ export class ClassService {
       }
 
       // Add section count for display
-      const enrichedResult = result.map(grade => ({
-        ...grade,
+      const enrichedResult = result.map(classItem => ({
+        ...classItem,
         _count: {
-          sections: grade.sectionCount || 0
+          sections: classItem.sectionCount || 0
         }
       }));
 
@@ -146,22 +146,22 @@ export class ClassService {
   static async getById(id: number, includeSections: boolean = false): Promise<ServiceResponse<any>> {
     try {
       const result = await db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt,
-      }).from(grades).where(eq(grades.id, id)).limit(1);
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        createdAt: classes.createdAt,
+      }).from(classes).where(eq(classes.id, id)).limit(1);
 
       if (result.length === 0) {
         return { success: false, error: 'Class not found' };
       }
 
-      const grade = result[0];
-      let enrichedGrade = { ...grade };
+      const classItem = result[0];
+      let enrichedClass = { ...classItem };
 
       if (includeSections) {
         const sectionsData = await db.select({
@@ -169,16 +169,16 @@ export class ClassService {
           name: sections.name,
           capacity: sections.capacity,
           branchId: sections.branchId,
-        }).from(sections).where(eq(sections.gradeId, id));
+        }).from(sections).where(eq(sections.classId, id));
 
-        enrichedGrade = {
-          ...enrichedGrade,
+        enrichedClass = {
+          ...enrichedClass,
           sections: sectionsData,
           _count: { sections: sectionsData.length }
         } as any;
       }
 
-      return { success: true, data: enrichedGrade };
+      return { success: true, data: enrichedClass };
     } catch (error: any) {
       console.error('Error fetching class by ID:', error);
       return { success: false, error: error.message || 'Failed to fetch class' };
@@ -201,16 +201,16 @@ export class ClassService {
         // Only add branchId if it has a value
         if (data.branchId) insertData.branchId = data.branchId;
         
-        const newGrade = await tx.insert(grades).values(insertData).returning();
+        const newClass = await tx.insert(classes).values(insertData).returning();
 
-        if (!newGrade || !newGrade[0]) {
+        if (!newClass || !newClass[0]) {
           return { success: false, error: 'Failed to create class' };
         }
 
         // If it's a private class for an organization, automatically add to enabled list
         if (data.isPrivate && data.organizationId) {
-          // Get current enabled grades
-          const orgResult = await tx.select({ enabledGrades: organizations.enabledGrades })
+          // Get current enabled classes
+          const orgResult = await tx.select({ enabledClasses: organizations.enabledClasses })
             .from(organizations)
             .where(eq(organizations.id, data.organizationId))
             .limit(1);
@@ -221,21 +221,21 @@ export class ClassService {
           
 
           if (orgResult.length > 0) {
-            const currentEnabled = orgResult[0].enabledGrades || [];
-            const newEnabled = [...currentEnabled, newGrade[0].id];
+            const currentEnabled = orgResult[0].enabledClasses || [];
+            const newEnabled = [...currentEnabled, newClass[0].id];
             
-            // Update organization's enabled grades
+            // Update organization's enabled classes
             await tx.update(organizations)
-              .set({ enabledGrades: newEnabled })
+              .set({ enabledClasses: newEnabled })
               .where(eq(organizations.id, data.organizationId));
           }
         }
 
         // Map the database result to match frontend expectations
         const mappedResult = {
-          ...newGrade[0],
-          gradeLevel: newGrade[0]!.order,
-          level: this.mapGradeLevelToLevel(newGrade[0]!.order || 1)
+          ...newClass[0],
+          gradeLevel: newClass[0]!.order,
+          level: this.mapGradeLevelToLevel(newClass[0]!.order || 1)
         };
 
         return mappedResult;
@@ -252,11 +252,11 @@ export class ClassService {
     try {
       // Check if the class exists and get its organization info
       const existing = await db.select({ 
-        id: grades.id, 
-        organizationId: grades.organizationId 
+        id: classes.id, 
+        organizationId: classes.organizationId 
       })
-        .from(grades)
-        .where(and(eq(grades.id, id), eq(grades.isDeleted, false)))
+        .from(classes)
+        .where(and(eq(classes.id, id), eq(classes.isDeleted, false)))
         .limit(1);
 
       if (existing.length === 0) {
@@ -282,21 +282,21 @@ export class ClassService {
       if (data.gradeLevel !== undefined) updateData.order = data.gradeLevel;
       // Note: level is auto-calculated from gradeLevel, not stored in DB
 
-      const updatedGrade = await db.update(grades)
+      const updatedClass = await db.update(classes)
         .set(updateData)
-        .where(eq(grades.id, id))
+        .where(eq(classes.id, id))
         .returning();
 
-      if (updatedGrade.length === 0) {
+      if (updatedClass.length === 0) {
         return { success: false, error: 'Class not found' };
       }
 
       // Map the database result to match frontend expectations
       const mappedResult = {
-        ...updatedGrade[0],
-        gradeLevel: updatedGrade[0]!.order,
+        ...updatedClass[0],
+        gradeLevel: updatedClass[0]!.order,
         // Use provided level if available, otherwise auto-calculate
-        level: data.level || this.mapGradeLevelToLevel(updatedGrade[0]!.order || 1)
+        level: data.level || this.mapGradeLevelToLevel(updatedClass[0]!.order || 1)
       };
       
       return { success: true, data: mappedResult };
@@ -310,11 +310,11 @@ export class ClassService {
     try {
       // Check if the class exists and get its organization info
       const existing = await db.select({ 
-        id: grades.id, 
-        organizationId: grades.organizationId 
+        id: classes.id, 
+        organizationId: classes.organizationId 
       })
-        .from(grades)
-        .where(and(eq(grades.id, id), eq(grades.isDeleted, false)))
+        .from(classes)
+        .where(and(eq(classes.id, id), eq(classes.isDeleted, false)))
         .limit(1);
 
       if (existing.length === 0) {
@@ -335,7 +335,7 @@ export class ClassService {
 
       // Check if there are active sections using this grade
       const existingSections = await db.select().from(sections).where(and(
-        eq(sections.gradeId, id),
+        eq(sections.classId, id),
         eq(sections.isDeleted, false)
       )).limit(1);
       
@@ -344,9 +344,9 @@ export class ClassService {
       }
 
       // Soft delete the grade
-      await db.update(grades)
+      await db.update(classes)
         .set({ isDeleted: true })
-        .where(eq(grades.id, id));
+        .where(eq(classes.id, id));
       
       return { success: true };
     } catch (error: any) {
@@ -362,19 +362,19 @@ export class ClassService {
         id: sections.id,
         name: sections.name,
         capacity: sections.capacity,
-        gradeId: sections.gradeId,
+        classId: sections.classId,
         branchId: sections.branchId,
-        gradeName: grades.name,
-        gradeDisplayName: grades.displayName,
-        gradeOrder: grades.order,
+        gradeName: classes.name,
+        gradeDisplayName: classes.displayName,
+        gradeOrder: classes.order,
       }).from(sections)
-      .leftJoin(grades, eq(sections.gradeId, grades.id))
+      .leftJoin(classes, eq(sections.classId, classes.id))
       .where(and(
         eq(sections.branchId, branchId),
         eq(sections.isDeleted, false),
-        eq(grades.isDeleted, false)
+        eq(classes.isDeleted, false)
       ))
-      .orderBy(grades.order, sections.name);
+      .orderBy(classes.order, sections.name);
 
       return { success: true, data: result };
     } catch (error: any) {
@@ -383,11 +383,11 @@ export class ClassService {
     }
   }
 
-  static async getSectionsByClass(gradeId: number, branchId: number, includeDeleted: boolean = false): Promise<ServiceResponse<any[]>> {
+  static async getSectionsByClass(classId: number, branchId: number, includeDeleted: boolean = false): Promise<ServiceResponse<any[]>> {
     try {
       // Build the where condition based on includeDeleted parameter
       let whereCondition = and(
-        eq(sections.gradeId, gradeId),
+        eq(sections.classId, classId),
         eq(sections.branchId, branchId)
       );
 
@@ -400,7 +400,7 @@ export class ClassService {
         id: sections.id,
         name: sections.name,
         capacity: sections.capacity,
-        gradeId: sections.gradeId,
+        classId: sections.classId,
         branchId: sections.branchId,
         organizationId: sections.organizationId,
         isDeleted: sections.isDeleted,
@@ -408,7 +408,7 @@ export class ClassService {
         classTeacherId: sections.classTeacherId,
         teacher: {
           id: staff.id,
-          name: sql<string>`CONCAT(${staff.firstName}, ' ', COALESCE(${staff.lastName}, ''))`.as('fullName')
+          name: sql<string>`CONCAT(${personDetails.firstName}, ' ', COALESCE(${personDetails.lastName}, ''))`.as('fullName')
         },
         // Add student count if needed
         _count: {
@@ -421,7 +421,15 @@ export class ClassService {
       })
       .from(sections)
       .leftJoin(staff, eq(sections.classTeacherId, staff.id))
-      .where(whereCondition)
+      .leftJoin(classes, eq(sections.classId, classes.id))
+      .leftJoin(branches, eq(sections.branchId, branches.id))
+      .leftJoin(personDetails, eq(staff.personDetailId, personDetails.id))
+      .where(and(
+        whereCondition,
+        eq(classes.isDeleted, false),
+        eq(branches.status, "ACTIVE")
+      ))
+
       .orderBy(sections.name);
 
       // Map the result to include proper structure
@@ -443,7 +451,7 @@ export class ClassService {
     try {
       // Check if section name already exists in this grade and branch (excluding soft-deleted)
       const existing = await db.select().from(sections).where(and(
-        eq(sections.gradeId, data.gradeId),
+        eq(sections.classId, data.classId),
         eq(sections.branchId, data.branchId),
         eq(sections.name, data.name),
         eq(sections.isDeleted, false)
@@ -464,7 +472,7 @@ export class ClassService {
       }
 
       const newSection = await db.insert(sections).values({
-        gradeId: data.gradeId,
+        classId: data.classId,
         name: data.name,
         capacity: data.capacity || null,
         branchId: data.branchId,
@@ -563,7 +571,7 @@ export class ClassService {
 
       // Check if name conflicts with existing active sections
       const existing = await db.select().from(sections).where(and(
-        eq(sections.gradeId, section[0]!.gradeId),
+        eq(sections.classId, section[0]!.classId),
         eq(sections.branchId, section[0]!.branchId),
         eq(sections.name, section[0]!.name),
         eq(sections.isDeleted, false)
@@ -585,11 +593,11 @@ export class ClassService {
     }
   }
 
-  // Get enabled grades for an organization (both global and private)
+  // Get enabled classes for an organization (both global and private)
   static async getEnabledForOrganization(organizationId: number): Promise<ServiceResponse<any[]>> {
     try {
-      // First get the organization's enabled grades list
-      const orgResult = await db.select({ enabledGrades: organizations.enabledGrades })
+      // First get the organization's enabled classes list
+      const orgResult = await db.select({ enabledClasses: organizations.enabledClasses })
         .from(organizations)
         .where(eq(organizations.id, organizationId))
         .limit(1);
@@ -601,96 +609,121 @@ export class ClassService {
         };
       }
 
-      const enabledIds = orgResult[0].enabledGrades || [];
+      const enabledIds = orgResult[0].enabledClasses;
 
-      console.log(enabledIds)
-      
-      if (enabledIds.length === 0) {
+      // Handle case where enabledClasses is null, undefined, or not an array
+      if (!enabledIds || !Array.isArray(enabledIds)) {
         return {
           success: true,
           data: []
         };
       }
 
-      // Get all enabled grades (global and private ones for this org)
+      // Filter out any null/undefined values from enabledIds
+      const validEnabledIds = enabledIds.filter(id => id != null && typeof id === 'number');
+      
+      if (validEnabledIds.length === 0) {
+        return {
+          success: true,
+          data: []
+        };
+      }
+
+      // Get all enabled classes (global and private ones for this org), including deleted ones for restore functionality
       const result = await db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
         level: sql<string>`
           CASE 
-            WHEN ${grades.order} <= 5 THEN 'Primary'
-            WHEN ${grades.order} <= 8 THEN 'Middle School'
-            WHEN ${grades.order} <= 10 THEN 'High School'
+            WHEN ${classes.order} <= 5 THEN 'Primary'
+            WHEN ${classes.order} <= 8 THEN 'Middle School'
+            WHEN ${classes.order} <= 10 THEN 'High School'
             ELSE 'Senior Secondary'
           END
         `.as('level'),
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt,
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        isDeleted: classes.isDeleted,
+        createdAt: classes.createdAt,
       })
-      .from(grades)
-      .where(and(
-        inArray(grades.id, enabledIds),
-        eq(grades.isDeleted, false)
-      ))
-      .orderBy(grades.order);
+      .from(classes)
+      .where(inArray(classes.id, validEnabledIds))
+      .orderBy(classes.order);
 
-      // Get all sections for these grades, organized by branches
+      // Get all sections for these classes, organized by branches (only for non-deleted classes)
       if (result.length > 0) {
-        const gradeIds = result.map(r => r.id);
+        const activeGradeIds = result.filter(r => !r.isDeleted).map(r => r.id);
+        let sectionsData: any[] = [];
         
-        const sectionsData = await db.select({
-          id: sections.id,
-          name: sections.name,
-          capacity: sections.capacity,
-          gradeId: sections.gradeId,
-          branchId: sections.branchId,
-          organizationId: sections.organizationId,
-          classTeacherId: sections.classTeacherId,
-          branchName: branches.name,
-          branchCode: branches.code,
-          // Add student count
-          _count: {
-            students: sql<number>`(
-              SELECT COUNT(*) FROM enrollments 
-              WHERE enrollments.section_id = ${sections.id} 
-              AND enrollments.is_deleted = false
-            )`.as('studentCount')
-          }
-        })
-        .from(sections)
-        .leftJoin(branches, eq(sections.branchId, branches.id))
-        .where(and(
-          sql`${sections.gradeId} IN (${sql.join(gradeIds.map(id => sql`${id}`), sql`, `)})`,
-          eq(sections.isDeleted, false),
-          eq(sections.organizationId, organizationId)
-        ));
-
-        // Attach sections to grades
-        const enrichedResult = result.map(grade => ({
-          ...grade,
-          sections: sectionsData.filter(section => section.gradeId === grade.id).map(section => ({
-            id: section.id,
-            name: section.name,
-            capacity: section.capacity,
-            branchId: section.branchId,
-            organizationId: section.organizationId,
-            classTeacherId: section.classTeacherId,
-            branch: {
-              name: section.branchName,
-              code: section.branchCode
-            },
+        if (activeGradeIds.length > 0) {
+          try {
+            sectionsData = await db.select({
+            id: sections.id,
+            name: sections.name,
+            capacity: sections.capacity,
+            classId: sections.classId,
+            branchId: sections.branchId,
+            organizationId: sections.organizationId,
+            classTeacherId: sections.classTeacherId,
+            branchName: branches.name,
+            branchCode: branches.code,
+            // Add student count
             _count: {
-              students: section._count?.students || 0
+              students: sql<number>`(
+                SELECT COUNT(*) FROM enrollments 
+                WHERE enrollments.section_id = ${sections.id} 
+                AND enrollments.is_deleted = false
+              )`.as('studentCount')
             }
-          })),
-          _count: {
-            sections: sectionsData.filter(section => section.gradeId === grade.id).length
+          })
+          .from(sections)
+          .leftJoin(branches, eq(sections.branchId, branches.id))
+          .where(and(
+            inArray(sections.classId, activeGradeIds),
+            eq(sections.isDeleted, false),
+            eq(sections.organizationId, organizationId)
+          ));
+          } catch (sectionError: any) {
+            console.error('Error fetching sections for classes:', sectionError);
+            // Continue without sections data if there's an error
+            sectionsData = [];
           }
-        }));
+        }
+
+        // Attach sections to classes
+        const enrichedResult = result.map(classItem => {
+          if (!classItem || !classItem.id) {
+            console.warn('Invalid class found:', classItem);
+            return null;
+          }
+          
+          const classSections = sectionsData.filter(section => section && section.classId === classItem.id);
+          
+          return {
+            ...classItem,
+            sections: classSections.map(section => ({
+              id: section.id,
+              name: section.name || '',
+              capacity: section.capacity || 0,
+              branchId: section.branchId,
+              organizationId: section.organizationId,
+              classTeacherId: section.classTeacherId,
+              branch: {
+                name: section.branchName || '',
+                code: section.branchCode || ''
+              },
+              _count: {
+                students: section._count?.students || 0
+              }
+            })),
+            _count: {
+              sections: classSections.length
+            }
+          };
+        }).filter(classItem => classItem !== null);
 
         return {
           success: true,
@@ -703,94 +736,99 @@ export class ClassService {
         data: result
       };
     } catch (error: any) {
-      console.error('Error fetching enabled grades:', error);
-      return { success: false, error: error.message || 'Failed to fetch enabled grades' };
+      console.error('Error fetching enabled classes for organization:', organizationId, error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        code: error.code
+      });
+      return { success: false, error: error.message || 'Failed to fetch enabled classes' };
     }
   }
 
-  // Get all global grades (for selection by org admin)
+  // Get all global classes (for selection by org admin)
   static async getGlobal(): Promise<ServiceResponse<any[]>> {
     try {
       const result = await db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
         level: sql<string>`
           CASE 
-            WHEN ${grades.order} <= 5 THEN 'Primary'
-            WHEN ${grades.order} <= 8 THEN 'Middle School'
-            WHEN ${grades.order} <= 10 THEN 'High School'
+            WHEN ${classes.order} <= 5 THEN 'Primary'
+            WHEN ${classes.order} <= 8 THEN 'Middle School'
+            WHEN ${classes.order} <= 10 THEN 'High School'
             ELSE 'Senior Secondary'
           END
         `.as('level'),
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt,
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        createdAt: classes.createdAt,
       })
-      .from(grades)
+      .from(classes)
       .where(and(
-        eq(grades.isDeleted, false),
-        eq(grades.isPrivate, false),
-        isNull(grades.organizationId)
+        eq(classes.isDeleted, false),
+        eq(classes.isPrivate, false),
+        isNull(classes.organizationId)
       ))
-      .orderBy(grades.order);
+      .orderBy(classes.order);
 
       return {
         success: true,
         data: result
       };
     } catch (error: any) {
-      console.error('Error fetching global grades:', error);
-      return { success: false, error: error.message || 'Failed to fetch global grades' };
+      console.error('Error fetching global classes:', error);
+      return { success: false, error: error.message || 'Failed to fetch global classes' };
     }
   }
 
-  // Get private grades for an organization
+  // Get private classes for an organization
   static async getPrivateForOrganization(organizationId: number): Promise<ServiceResponse<any[]>> {
     try {
       const result = await db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
         level: sql<string>`
           CASE 
-            WHEN ${grades.order} <= 5 THEN 'Primary'
-            WHEN ${grades.order} <= 8 THEN 'Middle School'
-            WHEN ${grades.order} <= 10 THEN 'High School'
+            WHEN ${classes.order} <= 5 THEN 'Primary'
+            WHEN ${classes.order} <= 8 THEN 'Middle School'
+            WHEN ${classes.order} <= 10 THEN 'High School'
             ELSE 'Senior Secondary'
           END
         `.as('level'),
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt,
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        createdAt: classes.createdAt,
       })
-      .from(grades)
+      .from(classes)
       .where(and(
-        eq(grades.isDeleted, false),
-        eq(grades.isPrivate, true),
-        eq(grades.organizationId, organizationId)
+        eq(classes.isDeleted, false),
+        eq(classes.isPrivate, true),
+        eq(classes.organizationId, organizationId)
       ))
-      .orderBy(grades.order);
+      .orderBy(classes.order);
 
       return {
         success: true,
         data: result
       };
     } catch (error: any) {
-      console.error('Error fetching private grades:', error);
-      return { success: false, error: error.message || 'Failed to fetch private grades' };
+      console.error('Error fetching private classes:', error);
+      return { success: false, error: error.message || 'Failed to fetch private classes' };
     }
   }
 
-  // Get enabled grades for an organization
-  static async getEnabledGrades(organizationId: number): Promise<ServiceResponse<any[]>> {
+  // Get enabled classes for an organization
+  static async getEnabledClasses(organizationId: number): Promise<ServiceResponse<any[]>> {
     try {
       // Get enabled grade IDs from organization
-      const orgResult = await db.select({ enabledGrades: organizations.enabledGrades })
+      const orgResult = await db.select({ enabledClasses: organizations.enabledClasses })
         .from(organizations)
         .where(eq(organizations.id, organizationId))
         .limit(1);
@@ -799,59 +837,64 @@ export class ClassService {
         return { success: false, error: 'Organization not found' };
       }
 
-      const enabledIds = orgResult[0]?.enabledGrades || [];
+      const enabledIds = orgResult[0]?.enabledClasses || [];
       
-      // If no grades are specifically enabled, return all organization grades
+      // If no classes are specifically enabled, return all organization classes
       if (enabledIds.length === 0) {
         return await this.getAll({ organizationId });
       }
 
-      // Fetch the enabled grades
+      // Fetch the enabled classes
       const result = await db.select({
-        id: grades.id,
-        name: grades.name,
-        displayName: grades.displayName,
-        gradeLevel: grades.order,
+        id: classes.id,
+        name: classes.name,
+        displayName: classes.displayName,
+        gradeLevel: classes.order,
         level: sql<string>`
           CASE 
-            WHEN ${grades.order} <= 5 THEN 'Primary'
-            WHEN ${grades.order} <= 8 THEN 'Middle School'
-            WHEN ${grades.order} <= 10 THEN 'High School'
+            WHEN ${classes.order} <= 5 THEN 'Primary'
+            WHEN ${classes.order} <= 8 THEN 'Middle School'
+            WHEN ${classes.order} <= 10 THEN 'High School'
             ELSE 'Senior Secondary'
           END
         `.as('level'),
-        branchId: grades.branchId,
-        organizationId: grades.organizationId,
-        isPrivate: grades.isPrivate,
-        createdAt: grades.createdAt
+        branchId: classes.branchId,
+        organizationId: classes.organizationId,
+        isPrivate: classes.isPrivate,
+        createdAt: classes.createdAt
       })
-        .from(grades)
+        .from(classes)
         .where(
           and(
-            inArray(grades.id, enabledIds),
-            eq(grades.isDeleted, false)
+            inArray(classes.id, enabledIds),
+            eq(classes.isDeleted, false)
           )
         )
-        .orderBy(grades.order);
+        .orderBy(classes.order);
 
       return { success: true, data: result };
     } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to fetch enabled grades' };
+      return { success: false, error: error.message || 'Failed to fetch enabled classes' };
     }
   }
 
   // Check removal info - determines if class should be deleted or just removed from enabled list
   static async checkRemoval(classId: number, organizationId?: number): Promise<ServiceResponse<any>> {
     try {
+
+      if(!organizationId) {
+        return { success: false, error: 'Organization ID is required' };
+      }
+
       // Get class/grade details
       const classResult = await db.select({
-        id: grades.id,
-        name: grades.name,
-        isPrivate: grades.isPrivate,
-        organizationId: grades.organizationId,
+        id: classes.id,
+        name: classes.name,
+        isPrivate: classes.isPrivate,
+        organizationId: classes.organizationId,
       })
-      .from(grades)
-      .where(and(eq(grades.id, classId), eq(grades.isDeleted, false)))
+      .from(classes)
+      .where(and(eq(classes.id, classId), eq(classes.isDeleted, false)))
       .limit(1);
 
       if (classResult.length === 0) {
@@ -863,10 +906,19 @@ export class ClassService {
 
       const classData = classResult[0];
 
+      if(!classData) {
+        return { success: false, error: 'Class data not found' };
+      }
+
       // Check if class has sections
       const sectionCount = await db.select({ count: sql<number>`COUNT(*)` })
         .from(sections)
-        .where(and(eq(sections.gradeId, classId), eq(sections.isDeleted, false)));
+        .where(and(eq(sections.classId, classId), eq(sections.isDeleted, false)));
+
+
+      if(!sectionCount[0]) {
+        return { success: false, error: 'Section count data not found' };
+      }
 
       const hasSections = sectionCount[0]?.count > 0;
 
@@ -932,12 +984,11 @@ export class ClassService {
 
       if (removalType === 'delete') {
         // Delete the private class entirely
-        const result = await db.update(grades)
+        const result = await db.update(classes)
           .set({ 
             isDeleted: true,
-            updatedAt: sql`CURRENT_TIMESTAMP`
           })
-          .where(and(eq(grades.id, classId), eq(grades.isDeleted, false)))
+          .where(and(eq(classes.id, classId), eq(classes.isDeleted, false)))
           .returning();
 
         if (result.length === 0) {
@@ -955,7 +1006,7 @@ export class ClassService {
           }
         };
       } else {
-        // Remove from organization's enabled grades list
+        // Remove from organization's enabled classes list
         if (!organizationId) {
           return {
             success: false,
@@ -964,8 +1015,8 @@ export class ClassService {
         }
 
         const result = await db.transaction(async (tx) => {
-          // Get current enabled grades
-          const orgResult = await tx.select({ enabledGrades: organizations.enabledGrades })
+          // Get current enabled classes
+          const orgResult = await tx.select({ enabledClasses: organizations.enabledClasses })
             .from(organizations)
             .where(eq(organizations.id, organizationId))
             .limit(1);
@@ -974,12 +1025,12 @@ export class ClassService {
             throw new Error('Organization not found');
           }
 
-          const currentEnabled = orgResult[0].enabledGrades || [];
+          const currentEnabled = orgResult[0].enabledClasses || [];
           const newEnabled = currentEnabled.filter(id => id !== classId);
           
-          // Update organization's enabled grades
+          // Update organization's enabled classes
           await tx.update(organizations)
-            .set({ enabledGrades: newEnabled })
+            .set({ enabledClasses: newEnabled })
             .where(eq(organizations.id, organizationId));
 
           return { classId, organizationId };
@@ -1000,6 +1051,128 @@ export class ClassService {
         success: false,
         error: error.message || 'Failed to remove or delete class'
       };
+    }
+  }
+
+  // Restore class (soft-deleted private classes or removed public classes)
+  static async restore(id: number, userRole?: string, userOrganizationId?: number): Promise<ServiceResponse<any>> {
+    try {
+      // Check if the class exists (both deleted and active)
+      const existing = await db.select({ 
+        id: classes.id, 
+        organizationId: classes.organizationId,
+        name: classes.name,
+        isPrivate: classes.isPrivate,
+        isDeleted: classes.isDeleted,
+        order: classes.order
+      })
+        .from(classes)
+        .where(eq(classes.id, id))
+        .limit(1);
+
+      if (existing.length === 0) {
+        return { success: false, error: 'Class not found' };
+      }
+
+      const existingClass = existing[0];
+
+      if (!existingClass?.isDeleted) {
+        return { success: false, error: 'Class is not deleted' };
+      }
+
+      // For private classes, they must be deleted to restore
+      if (existingClass.isPrivate && existingClass.organizationId) {
+        if (!existingClass.isDeleted) {
+          return { success: false, error: 'Private class is not deleted' };
+        }
+
+        // Prevent non-SUPER_ADMIN users from restoring private classes from other organizations
+        if (userRole !== 'SUPER_ADMIN' && userOrganizationId && existingClass.organizationId !== userOrganizationId) {
+          return { success: false, error: 'Access denied' };
+        }
+
+        // Check for name conflicts with existing active classes
+        const nameConflict = await db.select()
+          .from(classes)
+          .where(and(
+            eq(classes.name, existingClass.name),
+            eq(classes.isDeleted, false),
+            eq(classes.organizationId, existingClass.organizationId)
+          ))
+          .limit(1);
+
+        if (nameConflict.length > 0) {
+          return { success: false, error: 'A class with this name already exists in the organization' };
+        }
+      }
+
+      // For global classes, we need organization ID to add them back to enabled list
+      if (!existingClass.isPrivate && !userOrganizationId) {
+        return { success: false, error: 'Organization ID is required to restore global class' };
+      }
+
+      // For global classes, prevent non-SUPER_ADMIN users from restoring
+      if (!existingClass.isPrivate && existingClass.organizationId === null && userRole !== 'SUPER_ADMIN') {
+        return { success: false, error: 'Cannot restore global classes. Only super admins can restore global entities.' };
+      }
+
+      const result = await db.transaction(async (tx) => {
+        let restoredClass = existingClass;
+
+        // Step 1: For private classes, restore the class (set isDeleted = false)
+        if (existingClass.isPrivate && existingClass.organizationId && existingClass.isDeleted) {
+          const restored = await tx.update(classes)
+            .set({ 
+              isDeleted: false,
+            })
+            .where(eq(classes.id, id))
+            .returning();
+
+          if (restored.length === 0) {
+            throw new Error('Failed to restore class');
+          }
+
+          restoredClass = { ...existingClass, ...restored[0], isDeleted: false };
+        }
+
+        // Step 2: Add class back to organization's enabled list
+        const targetOrgId = userOrganizationId || existingClass.organizationId;
+        if (targetOrgId) {
+          // Get current enabled classes
+          const orgResult = await tx.select({ enabledClasses: organizations.enabledClasses })
+            .from(organizations)
+            .where(eq(organizations.id, targetOrgId))
+            .limit(1);
+
+          if (orgResult && orgResult[0]) {
+            const currentEnabled = orgResult[0].enabledClasses || [];
+            
+            // Only add if not already in the list
+            if (!currentEnabled.includes(id)) {
+              const newEnabled = [...currentEnabled, id];
+              
+              // Update organization's enabled classes
+              await tx.update(organizations)
+                .set({ enabledClasses: newEnabled })
+                .where(eq(organizations.id, targetOrgId));
+            }
+          }
+        }
+
+        return restoredClass;
+      });
+
+      // Map the database result to match frontend expectations
+      const mappedResult = {
+        ...result,
+        gradeLevel: result.name,
+        level: this.mapGradeLevelToLevel(result.order || 1)
+      };
+      
+      return { success: true, data: mappedResult };
+    } catch (error: any) {
+      console.error('Error restoring class:', error);
+      return { success: false, error: error.message || 'Failed to restore class' };
     }
   }
 }

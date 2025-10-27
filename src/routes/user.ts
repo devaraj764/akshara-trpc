@@ -15,7 +15,7 @@ const createUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   fullName: z.string().min(1),
-  role: z.enum(['BRANCH_ADMIN', 'ACCOUNTANT', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF']),
+  role: z.enum(['ACCOUNTANT', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF']),
   branchId: z.number().optional(),
   organizationId: z.number().optional(),
 });
@@ -126,7 +126,7 @@ export const userRouter = router({
         // Must be in the same branch
         input.branchId = currentUser.branchId ?? undefined;
       } else if (currentUserRole === 'ADMIN' || currentUserRole === 'SUPER_ADMIN') {
-        // Admins can create any role including BRANCH_ADMIN
+        // Admins can create users with any available role (BRANCH_ADMIN assigned through branch management)
         // No additional restrictions for admins
       } else {
         throw new TRPCError({
@@ -375,7 +375,7 @@ export const userRouter = router({
       return { success: true };
     }),
 
-  activateUser: adminProcedure
+  activateUser: branchAdminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const result = await userService.reactivateProfile(input.id);
@@ -390,7 +390,7 @@ export const userRouter = router({
       return result.data;
     }),
 
-  deactivateUser: adminProcedure
+  deactivateUser: branchAdminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const result = await userService.deactivateProfile(input.id);
@@ -413,6 +413,28 @@ export const userRouter = router({
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: result.error || 'Failed to fetch available filters',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  changePassword: protectedProcedure
+    .input(z.object({
+      currentPassword: z.string().min(1, 'Current password is required'),
+      newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await userService.changeOwnPassword(
+        ctx.user.id,
+        input.currentPassword,
+        input.newPassword
+      );
+      
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to change password',
         });
       }
       

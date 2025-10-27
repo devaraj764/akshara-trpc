@@ -3,9 +3,18 @@ import db from '../db/index.js';
 import { organizations, addresses } from '../db/schema.js';
 import { ServiceResponse } from '../types.db.js';
 
+export interface OrganizationSetup {
+  academic_years?: any[];
+  subjects?: any[];
+  departments?: any[];
+  grades?: any[];
+  fee_types?: any[];
+  fee_items?: any[];
+}
+
 export interface CreateOrganizationData {
   name: string;
-  registrationNumber?: string | undefined;
+  registrationNumber?: string;
   address?: {
     addressLine1: string;
     addressLine2?: string;
@@ -15,15 +24,15 @@ export interface CreateOrganizationData {
     state: string;
     country?: string;
   };
-  contactEmail?: string | undefined;
-  contactPhone?: string | undefined;
-  settings?: any;
-  status?: string | undefined;
+  contactEmail?: string;
+  contactPhone?: string;
+  status?: string;
+  setup?: OrganizationSetup;
 }
 
 export interface UpdateOrganizationData {
-  name?: string | undefined;
-  registrationNumber?: string | undefined;
+  name?: string;
+  registrationNumber?: string;
   address?: {
     addressLine1: string;
     addressLine2?: string;
@@ -33,14 +42,14 @@ export interface UpdateOrganizationData {
     state: string;
     country?: string;
   };
-  contactEmail?: string | undefined;
-  contactPhone?: string | undefined;
-  settings?: any;
-  status?: string | undefined;
-  enabledDepartments?: number[] | undefined;
-  enabledSubjects?: number[] | undefined;
-  enabledGrades?: number[] | undefined;
-  enabledFeetypes?: number[] | undefined;
+  contactEmail?: string;
+  contactPhone?: string;
+  status?: string;
+  enabledDepartments?: number[];
+  enabledSubjects?: number[];
+  enabledClasses?: number[];
+  enabledFeetypes?: number[];
+  setup?: OrganizationSetup;
 }
 
 export class OrganizationService {
@@ -50,16 +59,16 @@ export class OrganizationService {
         id: organizations.id,
         name: organizations.name,
         registrationNumber: organizations.registrationNumber,
-        address: organizations.address,
+        addressId: organizations.addressId,
         contactEmail: organizations.contactEmail,
         contactPhone: organizations.contactPhone,
         createdAt: organizations.createdAt,
         updatedAt: organizations.updatedAt,
-        settings: organizations.settings,
+        meta: organizations.meta,
         status: organizations.status,
         enabledDepartments: organizations.enabledDepartments,
         enabledSubjects: organizations.enabledSubjects,
-        enabledGrades: organizations.enabledGrades,
+        enabledClasses: organizations.enabledClasses,
         enabledFeetypes: organizations.enabledFeetypes,
       })
       .from(organizations)
@@ -91,16 +100,16 @@ export class OrganizationService {
         id: organizations.id,
         name: organizations.name,
         registrationNumber: organizations.registrationNumber,
-        address: organizations.address,
+        addressId: organizations.addressId,
         contactEmail: organizations.contactEmail,
         contactPhone: organizations.contactPhone,
         createdAt: organizations.createdAt,
         updatedAt: organizations.updatedAt,
-        settings: organizations.settings,
+        meta: organizations.meta,
         status: organizations.status,
         enabledDepartments: organizations.enabledDepartments,
         enabledSubjects: organizations.enabledSubjects,
-        enabledGrades: organizations.enabledGrades,
+        enabledClasses: organizations.enabledClasses,
         enabledFeetypes: organizations.enabledFeetypes,
       })
       .from(organizations)
@@ -141,13 +150,19 @@ export class OrganizationService {
           addressId = addressResult[0]?.id;
         }
 
+        // Prepare meta object with setup if provided
+        const metaData: any = {};
+        if (data.setup) {
+          metaData.setup = data.setup;
+        }
+
         // Create organization
         const result = await tx.insert(organizations).values({
           name: data.name,
           registrationNumber: data.registrationNumber || null,
           contactEmail: data.contactEmail || null,
           contactPhone: data.contactPhone || null,
-          settings: data.settings || null,
+          meta: Object.keys(metaData).length > 0 ? metaData : null,
           status: data.status || 'ACTIVE',
           addressId: addressId || null,
           createdAt: new Date().toISOString(),
@@ -180,12 +195,27 @@ export class OrganizationService {
       if (data.address !== undefined) updateData.address = data.address;
       if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
       if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
-      if (data.settings !== undefined) updateData.settings = data.settings;
       if (data.status !== undefined) updateData.status = data.status;
       if (data.enabledDepartments !== undefined) updateData.enabledDepartments = data.enabledDepartments;
       if (data.enabledSubjects !== undefined) updateData.enabledSubjects = data.enabledSubjects;
-      if (data.enabledGrades !== undefined) updateData.enabledGrades = data.enabledGrades;
+      if (data.enabledClasses !== undefined) updateData.enabledClasses = data.enabledClasses;
       if (data.enabledFeetypes !== undefined) updateData.enabledFeetypes = data.enabledFeetypes;
+
+      // Handle meta updates (setup)
+      if (data.setup !== undefined) {
+        // Get current meta to merge
+        const current = await this.getById(id);
+        if (!current.success) {
+          return current;
+        }
+        
+        const currentMeta = current.data.meta || {};
+        const newMeta: any = { ...currentMeta };
+        
+        newMeta.setup = data.setup;
+        
+        updateData.meta = newMeta;
+      }
 
       if (Object.keys(updateData).length === 0) {
         return {
@@ -380,11 +410,11 @@ export class OrganizationService {
   }
 
   // Methods for managing enabled grades
-  static async updateEnabledGrades(id: number, gradeIds: number[]): Promise<ServiceResponse<any>> {
+  static async updateEnabledClasses(id: number, classIds: number[]): Promise<ServiceResponse<any>> {
     try {
       const result = await db.update(organizations)
         .set({ 
-          enabledGrades: gradeIds,
+          enabledClasses: classIds,
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
         .where(eq(organizations.id, id))
@@ -409,7 +439,7 @@ export class OrganizationService {
     }
   }
 
-  static async addEnabledGrade(id: number, gradeId: number): Promise<ServiceResponse<any>> {
+  static async addEnabledClass(id: number, classId: number): Promise<ServiceResponse<any>> {
     try {
       // Get current enabled grades
       const current = await this.getById(id);
@@ -417,16 +447,16 @@ export class OrganizationService {
         return current;
       }
 
-      const currentIds = current.data.enabledGrades || [];
-      if (currentIds.includes(gradeId)) {
+      const currentIds = current.data.enabledClasses || [];
+      if (currentIds.includes(classId)) {
         return {
           success: true,
           data: current.data
         };
       }
 
-      const newIds = [...currentIds, gradeId];
-      return this.updateEnabledGrades(id, newIds);
+      const newIds = [...currentIds, classId];
+      return this.updateEnabledClasses(id, newIds);
     } catch (error: any) {
       return {
         success: false,
@@ -435,7 +465,7 @@ export class OrganizationService {
     }
   }
 
-  static async removeEnabledGrade(id: number, gradeId: number): Promise<ServiceResponse<any>> {
+  static async removeEnabledClass(id: number, classId: number): Promise<ServiceResponse<any>> {
     try {
       // Get current enabled grades
       const current = await this.getById(id);
@@ -443,10 +473,10 @@ export class OrganizationService {
         return current;
       }
 
-      const currentIds = current.data.enabledGrades || [];
-      const newIds = currentIds.filter((gId: number) => gId !== gradeId);
+      const currentIds = current.data.enabledClasses || [];
+      const newIds = currentIds.filter((cId: number) => cId !== classId);
       
-      return this.updateEnabledGrades(id, newIds);
+      return this.updateEnabledClasses(id, newIds);
     } catch (error: any) {
       return {
         success: false,
