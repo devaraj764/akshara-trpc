@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, adminProcedure, branchAdminProcedure, TRPCError } from '../trpc.js';
+import { router, adminProcedure, branchAdminProcedure, protectedProcedure, TRPCError } from '../trpc.js';
 import { NoticeBoardService } from '../services/noticeBoardService.js';
 
 const createNoticeSchema = z.object({
@@ -373,7 +373,7 @@ export const noticeBoardRouter = router({
       }
     }),
 
-  getBranchNotices: branchAdminProcedure
+  getBranchNotices: protectedProcedure
     .input(z.object({ 
       includeOrgNotices: z.boolean().optional().default(true),
       isPublished: z.boolean().optional()

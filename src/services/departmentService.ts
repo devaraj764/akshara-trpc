@@ -712,8 +712,6 @@ export class DepartmentService {
         .where(eq(organizations.id, organizationId))
         .limit(1);
 
-      console.log('Organization result:', orgResult);
-
       if (!orgResult || !orgResult[0]) {
         return {
           success: false,

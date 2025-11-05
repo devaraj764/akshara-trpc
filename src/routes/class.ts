@@ -349,12 +349,9 @@ export const classRouter = router({
 
 // Sections Router - Branch admins can manage sections within their branch
 export const sectionRouter = router({
-  getByBranch: branchAdminProcedure
-    .input(z.object({
-      branchId: z.number().optional(), // If not provided, use user's branch
-    }))
-    .query(async ({ input, ctx }) => {
-      const branchId = input.branchId || ctx.user.branchId;
+  getSections: protectedProcedure
+    .query(async ({ ctx }) => {
+      const branchId = ctx.user.branchId;
 
       if (!branchId) {
         throw new TRPCError({
@@ -375,10 +372,53 @@ export const sectionRouter = router({
       return result.data;
     }),
 
+  getByBranch: protectedProcedure
+    .input(z.object({
+      branchId: z.number().optional(), // If not provided, use user's branch
+    }).optional())
+    .query(async ({ input, ctx }) => {
+      const branchId = input?.branchId || ctx.user.branchId;
+
+      if (!branchId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Branch ID is required',
+        });
+      }
+
+      const result = await ClassService.getSectionsByBranch(branchId);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: result.error || 'Failed to fetch sections',
+        });
+      }
+
+      return result.data;
+    }),
+
+  getByBranchId: protectedProcedure
+    .input(z.object({
+      branchId: z.number(),
+    }))
+    .query(async ({ input, ctx }) => {
+      const result = await ClassService.getSectionsByBranch(input.branchId);
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: result.error || 'Failed to fetch sections',
+        });
+      }
+
+      return result.data;
+    }),
+
   getByClass: branchAdminProcedure
     .input(z.object({
       classId: z.number(),
-      includeDeleted: z.boolean().optional(), // If not provided, use user's branch
+      includeDeleted: z.boolean().optional(),
     }))
     .query(async ({ input, ctx }) => {
       const branchId = ctx.user.branchId;
@@ -401,6 +441,7 @@ export const sectionRouter = router({
 
       return result.data;
     }),
+
 
   create: branchAdminProcedure
     .input(createSectionSchema)

@@ -207,7 +207,9 @@ export const parentRouter = router({
 
   // Update parent
   update: branchAdminProcedure
-    .input(updateParentSchema)
+    .input(updateParentSchema.extend({
+      studentId: z.number().optional(), // Add studentId to handle relationship update
+    }))
     .mutation(async ({ input, ctx }) => {
       // First check if parent exists and user has permission
       const existingParent = await ParentService.getById(input.id);
@@ -228,13 +230,33 @@ export const parentRouter = router({
         }
       }
 
-      const result = await ParentService.update(input);
+      // Separate relationship field from parent data
+      const { relationship, studentId, ...parentData } = input;
+
+      // Update parent basic information
+      const result = await ParentService.update({ id: input.id, ...parentData });
       
       if (!result.success) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: result.error || 'Failed to update parent',
         });
+      }
+
+      // Update relationship if provided and studentId is available
+      if (relationship !== undefined && studentId) {
+        const relationshipResult = await ParentService.updateStudentParentRelation(
+          studentId,
+          input.id,
+          { relationship }
+        );
+        
+        if (!relationshipResult.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: relationshipResult.error || 'Failed to update parent relationship',
+          });
+        }
       }
       
       return result.data;

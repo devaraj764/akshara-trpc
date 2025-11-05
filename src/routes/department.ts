@@ -28,7 +28,7 @@ const bulkCreateDepartmentSchema = z.object({
 // Departments router - Only admins can manage departments
 export const departmentRouter = router({
   // Get all departments - accessible by both admin and branch admin
-  getAll: branchAdminProcedure
+  getAll: protectedProcedure
     .input(z.object({
       organizationId: z.number().positive().optional(),
       branchId: z.number().positive().optional(),

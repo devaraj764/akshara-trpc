@@ -70,8 +70,19 @@ export class OrganizationService {
         enabledSubjects: organizations.enabledSubjects,
         enabledClasses: organizations.enabledClasses,
         enabledFeetypes: organizations.enabledFeetypes,
+        // Address data
+        address: {
+          addressLine1: addresses.addressLine1,
+          addressLine2: addresses.addressLine2,
+          pincode: addresses.pincode,
+          cityVillage: addresses.cityVillage,
+          district: addresses.district,
+          state: addresses.state,
+          country: addresses.country,
+        }
       })
       .from(organizations)
+      .leftJoin(addresses, eq(organizations.addressId, addresses.id))
       .where(eq(organizations.id, id))
       .limit(1);
 
@@ -82,9 +93,16 @@ export class OrganizationService {
         };
       }
 
+      const organization = result[0];
+      // Clean up address if no addressId
+      const cleanedOrganization = {
+        ...organization,
+        address: organization.addressId ? organization.address : undefined
+      };
+
       return {
         success: true,
-        data: result[0]
+        data: cleanedOrganization
       };
     } catch (error: any) {
       return {
@@ -188,60 +206,84 @@ export class OrganizationService {
 
   static async update(id: number, data: UpdateOrganizationData): Promise<ServiceResponse<any>> {
     try {
-      const updateData: any = {};
+      // Check if organization exists
+      const existingOrganization = await db.select().from(organizations).where(eq(organizations.id, id)).limit(1);
       
-      if (data.name !== undefined) updateData.name = data.name;
-      if (data.registrationNumber !== undefined) updateData.registrationNumber = data.registrationNumber;
-      if (data.address !== undefined) updateData.address = data.address;
-      if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
-      if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
-      if (data.status !== undefined) updateData.status = data.status;
-      if (data.enabledDepartments !== undefined) updateData.enabledDepartments = data.enabledDepartments;
-      if (data.enabledSubjects !== undefined) updateData.enabledSubjects = data.enabledSubjects;
-      if (data.enabledClasses !== undefined) updateData.enabledClasses = data.enabledClasses;
-      if (data.enabledFeetypes !== undefined) updateData.enabledFeetypes = data.enabledFeetypes;
+      if (!existingOrganization || !existingOrganization[0]) {
+        return { success: false, error: 'Organization not found' };
+      }
 
-      // Handle meta updates (setup)
-      if (data.setup !== undefined) {
-        // Get current meta to merge
-        const current = await this.getById(id);
-        if (!current.success) {
-          return current;
+      return await db.transaction(async (tx) => {
+        // Handle address update if provided
+        let addressId: number | undefined = existingOrganization[0]?.addressId || undefined;
+        if (data.address) {
+          if (addressId) {
+            // Update existing address
+            await tx.update(addresses).set({
+              addressLine1: data.address.addressLine1,
+              addressLine2: data.address.addressLine2 || null,
+              pincode: data.address.pincode || null,
+              cityVillage: data.address.cityVillage,
+              district: data.address.district,
+              state: data.address.state,
+              country: data.address.country || 'India',
+              updatedAt: new Date().toISOString()
+            }).where(eq(addresses.id, addressId));
+          } else {
+            // Create new address
+            const addressResult = await tx.insert(addresses).values({
+              addressLine1: data.address.addressLine1,
+              addressLine2: data.address.addressLine2 || null,
+              pincode: data.address.pincode || null,
+              cityVillage: data.address.cityVillage,
+              district: data.address.district,
+              state: data.address.state,
+              country: data.address.country || 'India',
+            }).returning({ id: addresses.id });
+            addressId = addressResult[0]?.id;
+          }
         }
-        
-        const currentMeta = current.data.meta || {};
-        const newMeta: any = { ...currentMeta };
-        
-        newMeta.setup = data.setup;
-        
-        updateData.meta = newMeta;
-      }
 
-      if (Object.keys(updateData).length === 0) {
-        return {
-          success: false,
-          error: 'No fields to update'
+        const updateData: any = {
+          updatedAt: new Date().toISOString()
         };
-      }
+        
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.registrationNumber !== undefined) updateData.registrationNumber = data.registrationNumber;
+        if (addressId !== undefined) updateData.addressId = addressId;
+        if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
+        if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+        if (data.status !== undefined) updateData.status = data.status;
+        if (data.enabledDepartments !== undefined) updateData.enabledDepartments = data.enabledDepartments;
+        if (data.enabledSubjects !== undefined) updateData.enabledSubjects = data.enabledSubjects;
+        if (data.enabledClasses !== undefined) updateData.enabledClasses = data.enabledClasses;
+        if (data.enabledFeetypes !== undefined) updateData.enabledFeetypes = data.enabledFeetypes;
 
-      updateData.updatedAt = sql`CURRENT_TIMESTAMP`;
+        // Handle meta updates (setup)
+        if (data.setup !== undefined) {
+          // Get current meta to merge
+          const currentMeta = existingOrganization[0].meta || {};
+          const newMeta: any = { ...currentMeta };
+          
+          newMeta.setup = data.setup;
+          
+          updateData.meta = newMeta;
+        }
 
-      const result = await db.update(organizations)
-        .set(updateData)
-        .where(eq(organizations.id, id))
-        .returning();
+        const result = await tx.update(organizations)
+          .set(updateData)
+          .where(eq(organizations.id, id))
+          .returning();
 
-      if (result.length === 0) {
+        if (result.length === 0) {
+          throw new Error('Failed to update organization');
+        }
+
         return {
-          success: false,
-          error: 'Organization not found'
+          success: true,
+          data: result[0]
         };
-      }
-
-      return {
-        success: true,
-        data: result[0]
-      };
+      });
     } catch (error: any) {
       return {
         success: false,

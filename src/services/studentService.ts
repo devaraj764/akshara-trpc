@@ -540,6 +540,52 @@ export class StudentService {
     }
   }
 
+  static async updateMedicalRecord(id: number, medicalData: any): Promise<ServiceResponse<any>> {
+    try {
+      const result = await db.update(studentMedicalRecords)
+        .set({
+          allergies: medicalData.allergies || null,
+          medications: medicalData.medications || null,
+          medicalConditions: medicalData.medicalConditions || null,
+          specialNeeds: medicalData.specialNeeds || null,
+          vaccinationRecords: medicalData.vaccinationRecords || null,
+          emergencyMedicalContact: medicalData.emergencyMedicalContact || null,
+          bloodType: medicalData.bloodType || null,
+          heightCm: medicalData.heightCm || null,
+          weightKg: medicalData.weightKg || null,
+          medicalNotes: medicalData.medicalNotes || null,
+          updatedBy: medicalData.updatedBy || null,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(studentMedicalRecords.id, id))
+        .returning();
+
+      if (result.length === 0) {
+        return { success: false, error: 'Medical record not found' };
+      }
+
+      return { success: true, data: result[0] };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update medical record' };
+    }
+  }
+
+  static async deleteMedicalRecord(id: number): Promise<ServiceResponse<void>> {
+    try {
+      const result = await db.delete(studentMedicalRecords)
+        .where(eq(studentMedicalRecords.id, id))
+        .returning({ id: studentMedicalRecords.id });
+
+      if (result.length === 0) {
+        return { success: false, error: 'Medical record not found' };
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to delete medical record' };
+    }
+  }
+
   // Student Behavioral Records Methods
   static async addBehavioralRecord(studentId: number, behavioralData: any): Promise<ServiceResponse<any>> {
     try {

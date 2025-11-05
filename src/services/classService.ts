@@ -364,9 +364,15 @@ export class ClassService {
         capacity: sections.capacity,
         classId: sections.classId,
         branchId: sections.branchId,
+        organizationId: sections.organizationId,
+        classTeacherId: sections.classTeacherId,
+        isDeleted: sections.isDeleted,
+        createdAt: sections.createdAt,
         gradeName: classes.name,
         gradeDisplayName: classes.displayName,
         gradeOrder: classes.order,
+        // Create a combined name in "Class X-Y" format
+        combinedName: sql<string>`CONCAT('Class ', ${classes.order}, '-', ${sections.name})`.as('combinedName')
       }).from(sections)
       .leftJoin(classes, eq(sections.classId, classes.id))
       .where(and(
@@ -417,7 +423,9 @@ export class ClassService {
             WHERE enrollments.section_id = ${sections.id} 
             AND enrollments.is_deleted = false
           )`.as('studentCount')
-        }
+        },
+        // Create a combined name in "Class X-Y" format
+        combinedName: sql<string>`CONCAT('Class ', ${classes.order}, '-', ${sections.name})`.as('combinedName')
       })
       .from(sections)
       .leftJoin(staff, eq(sections.classTeacherId, staff.id))
@@ -429,7 +437,6 @@ export class ClassService {
         eq(classes.isDeleted, false),
         eq(branches.status, "ACTIVE")
       ))
-
       .orderBy(sections.name);
 
       // Map the result to include proper structure
@@ -447,9 +454,10 @@ export class ClassService {
     }
   }
 
+
   static async createSection(data: CreateSectionData): Promise<ServiceResponse<any>> {
     try {
-      // Check if section name already exists in this grade and branch (excluding soft-deleted)
+      // Check if section name already exists in this class and branch (excluding soft-deleted)
       const existing = await db.select().from(sections).where(and(
         eq(sections.classId, data.classId),
         eq(sections.branchId, data.branchId),

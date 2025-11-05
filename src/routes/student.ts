@@ -72,6 +72,7 @@ export const studentRouter = router({
       isActive: z.boolean().optional(),
       academicYearId: z.number().optional(),
       enrollmentStatus: z.enum(['enrolled', 'unenrolled']).optional(),
+      classId: z.number().optional(),
     }).optional())
     .query(async ({ input, ctx }) => {
       // For non-admin users, use their organization/branch context
@@ -82,6 +83,7 @@ export const studentRouter = router({
         isActive: input?.isActive,
         academicYearId: input?.academicYearId,
         enrollmentStatus: input?.enrollmentStatus,
+        classId: input?.classId,
       };
 
       const result = await StudentService.getAll(filters);
@@ -304,5 +306,157 @@ export const studentRouter = router({
       }
       
       return result.data;
+    }),
+
+  // Medical Records CRUD
+  getMedicalRecord: protectedProcedure
+    .input(z.object({
+      studentId: z.number(),
+    }))
+    .query(async ({ input, ctx }) => {
+      // Check permissions - user should have access to this student
+      const studentResult = await StudentService.getById(input.studentId);
+      if (!studentResult.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      // Check permissions
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (studentResult.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only access students in your branch',
+          });
+        }
+      }
+
+      const result = await StudentService.getMedicalRecord(input.studentId);
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to fetch medical record',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  addMedicalRecord: branchAdminProcedure
+    .input(z.object({
+      studentId: z.number(),
+      allergies: z.string().optional(),
+      medications: z.string().optional(),
+      medicalConditions: z.string().optional(),
+      specialNeeds: z.string().optional(),
+      vaccinationRecords: z.any().optional(),
+      emergencyMedicalContact: z.any().optional(),
+      bloodType: z.string().optional(),
+      heightCm: z.number().optional(),
+      weightKg: z.number().optional(),
+      medicalNotes: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Check permissions - user should have access to this student
+      const studentResult = await StudentService.getById(input.studentId);
+      if (!studentResult.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      // Check permissions
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (studentResult.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only manage students in your branch',
+          });
+        }
+      }
+
+      const medicalData = {
+        ...input,
+        updatedBy: ctx.user.id,
+      };
+
+      const result = await StudentService.addMedicalRecord(input.studentId, medicalData);
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to create medical record',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  updateMedicalRecord: branchAdminProcedure
+    .input(z.object({
+      id: z.number(),
+      studentId: z.number(),
+      allergies: z.string().optional(),
+      medications: z.string().optional(),
+      medicalConditions: z.string().optional(),
+      specialNeeds: z.string().optional(),
+      vaccinationRecords: z.any().optional(),
+      emergencyMedicalContact: z.any().optional(),
+      bloodType: z.string().optional(),
+      heightCm: z.number().optional(),
+      weightKg: z.number().optional(),
+      medicalNotes: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Check permissions
+      const studentResult = await StudentService.getById(input.studentId);
+      if (!studentResult.success) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Student not found',
+        });
+      }
+
+      if (ctx.user.role !== 'SUPER_ADMIN' && ctx.user.role !== 'ADMIN') {
+        if (studentResult.data.branchId !== ctx.user.branchId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You can only manage students in your branch',
+          });
+        }
+      }
+
+      const medicalData = {
+        ...input,
+        updatedBy: ctx.user.id,
+      };
+
+      const result = await StudentService.updateMedicalRecord(input.id, medicalData);
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to update medical record',
+        });
+      }
+      
+      return result.data;
+    }),
+
+  deleteMedicalRecord: branchAdminProcedure
+    .input(z.object({
+      id: z.number(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await StudentService.deleteMedicalRecord(input.id);
+      if (!result.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: result.error || 'Failed to delete medical record',
+        });
+      }
+      
+      return { success: true };
     }),
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, adminProcedure, branchAdminProcedure, TRPCError } from '../trpc.js';
+import { router, adminProcedure, branchAdminProcedure, protectedProcedure, TRPCError } from '../trpc.js';
 import { CalendarService } from '../services/calendarService.js';
 
 const createCalendarEventSchema = z.object({
@@ -146,7 +146,7 @@ export const calendarRouter = router({
     }),
 
   // Branch-specific procedures
-  getBranchEvents: branchAdminProcedure
+  getBranchEvents: protectedProcedure
     .input(z.object({
       academicYearId: z.number().optional(),
       includeOrgEvents: z.boolean().optional().default(true)

@@ -462,7 +462,7 @@ class AuthService {
         }
         
         const branch = branchResult[0];
-        if (branch.status !== 'ACTIVE') {
+        if (branch?.status !== 'ACTIVE') {
           return { 
             success: false, 
             error: 'Your branch has been disabled. Please contact your administrator.' 
@@ -833,11 +833,34 @@ class AuthService {
   /**
    * Initial system setup - creates first super admin and organization
    */
-  async initialSetup({ email, password, fullName, organizationName }: {
+  async initialSetup({ 
+    email, 
+    password, 
+    fullName, 
+    organizationName,
+    organizationRegistrationNumber,
+    organizationAddress,
+    organizationPhone,
+    organizationEmail,
+    organizationSetup
+  }: {
     email: string;
     password: string;
     fullName: string;
     organizationName: string;
+    organizationRegistrationNumber?: string;
+    organizationAddress?: {
+      addressLine1: string;
+      addressLine2?: string;
+      pincode?: string;
+      cityVillage: string;
+      district: string;
+      state: string;
+      country?: string;
+    };
+    organizationPhone?: string;
+    organizationEmail?: string;
+    organizationSetup?: any;
   }): Promise<ServiceResponse<AuthSession>> {
     try {
       // Check if system is already initialized
@@ -851,11 +874,12 @@ class AuthService {
         email,
         password,
         fullName,
-        organizationName: organizationName,
-        organizationRegistrationNumber: undefined,
-        organizationAddress: undefined,
-        organizationPhone: undefined,
-        organizationEmail: undefined
+        organizationName,
+        ...(organizationRegistrationNumber !== undefined && { organizationRegistrationNumber }),
+        ...(organizationAddress !== undefined && { organizationAddress }),
+        ...(organizationPhone !== undefined && { organizationPhone }),
+        ...(organizationEmail !== undefined && { organizationEmail }),
+        ...(organizationSetup !== undefined && { organizationSetup }),
       };
 
       return await this.signUp(signUpData);

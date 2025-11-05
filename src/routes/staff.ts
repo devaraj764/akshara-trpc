@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, branchAdminProcedure, adminProcedure } from '../trpc.js';
+import { router, branchAdminProcedure, adminProcedure, protectedProcedure } from '../trpc.js';
 import { TRPCError } from '@trpc/server';
 import { StaffService } from '../services/staffService.js';
 import { StaffSalaryService } from '../services/staffSalaryService.js';
@@ -83,8 +83,8 @@ const updateTeacherQualificationsSchema = z.object({
 
 // Staff router - Both admins and branch admins can manage staff
 export const staffRouter = router({
-  // Get all staff - accessible by both admin and branch admin
-  getAll: branchAdminProcedure
+  // Get all staff - accessible by staff members as well
+  getAll: protectedProcedure
     .input(z.object({
       branchId: z.number().positive().optional(),
       departmentId: z.number().positive().optional(),
@@ -114,7 +114,7 @@ export const staffRouter = router({
     }),
 
   // Get staff by ID
-  getById: branchAdminProcedure
+  getById: protectedProcedure
     .input(z.object({
       id: z.number().positive(),
     }))

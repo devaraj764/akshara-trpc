@@ -34,6 +34,11 @@ const initialSetupSchema = z.object({
   password: z.string().min(6),
   fullName: z.string().min(1),
   organizationName: z.string().min(1),
+  organizationRegistrationNumber: z.string().optional(),
+  organizationAddress: addressSchema.optional(),
+  organizationPhone: z.string().regex(/^\d{0,10}$/, 'Phone number must be maximum 10 digits').optional(),
+  organizationEmail: z.string().email({ message: "Please enter a valid email address" }).optional().or(z.literal('')),
+  organizationSetup: organizationSetupSchema.optional(),
 });
 
 export const authRouter = router({
@@ -51,7 +56,30 @@ export const authRouter = router({
         });
       }
       
-      const result = await authService.initialSetup(input);
+      // Filter out undefined values to match the initialSetup interface
+      const filteredInput = {
+        email: input.email,
+        password: input.password,
+        fullName: input.fullName,
+        organizationName: input.organizationName,
+        ...(input.organizationRegistrationNumber && { organizationRegistrationNumber: input.organizationRegistrationNumber }),
+        ...(input.organizationAddress && {
+          organizationAddress: {
+            addressLine1: input.organizationAddress.addressLine1,
+            cityVillage: input.organizationAddress.cityVillage,
+            district: input.organizationAddress.district,
+            state: input.organizationAddress.state,
+            ...(input.organizationAddress.addressLine2 && { addressLine2: input.organizationAddress.addressLine2 }),
+            ...(input.organizationAddress.pincode && { pincode: input.organizationAddress.pincode }),
+            ...(input.organizationAddress.country && { country: input.organizationAddress.country }),
+          }
+        }),
+        ...(input.organizationPhone && { organizationPhone: input.organizationPhone }),
+        ...(input.organizationEmail && { organizationEmail: input.organizationEmail }),
+        ...(input.organizationSetup && { organizationSetup: input.organizationSetup }),
+      };
+      
+      const result = await authService.initialSetup(filteredInput);
       
       if (!result.success) {
         throw new TRPCError({
@@ -76,7 +104,24 @@ export const authRouter = router({
         });
       }
       
-      const result = await authService.signUp({ ...input, role: 'ADMIN' });
+      // Filter out undefined values to match the signUp interface
+      const filteredInput = {
+        ...input,
+        role: 'ADMIN' as const,
+        ...(input.organizationAddress && {
+          organizationAddress: {
+            addressLine1: input.organizationAddress.addressLine1,
+            cityVillage: input.organizationAddress.cityVillage,
+            district: input.organizationAddress.district,
+            state: input.organizationAddress.state,
+            ...(input.organizationAddress.addressLine2 && { addressLine2: input.organizationAddress.addressLine2 }),
+            ...(input.organizationAddress.pincode && { pincode: input.organizationAddress.pincode }),
+            ...(input.organizationAddress.country && { country: input.organizationAddress.country }),
+          }
+        })
+      };
+      
+      const result = await authService.signUp(filteredInput);
       
       if (!result.success) {
         throw new TRPCError({
